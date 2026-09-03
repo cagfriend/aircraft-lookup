@@ -1,0 +1,193 @@
+// src/airportdata.js — airport-data.com 全局飞机数据库(通用机型/机龄/执飞航线来源)
+import * as cheerio from 'cheerio';
+import { fetchURL } from './fetch.js';
+
+const BASE = 'https://airport-data.com/aircraft/';
+
+function txt(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 解析标题 "Aircraft Data N784AN, 2000 Boeing 777-223, c/n 29588"
+ */
+function parseTitle(title) {
+  const m = txt(title).match(/Aircraft Data\s+([A-Z0-9-]+),\s*(\d{4})\s+(.+?),\s*c\/n\s+(\d+)/i);
+  if (!m) return null;
+  return { registration: m[1], year: Number(m[2]), fullType: txt(m[3]), cn: m[4] };
+}
+
+/**
+ * 生成注册号的连字符变体，供容错查询使用。
+ * 例：B7973 -> ["B7973","B-7973"]；GEUYR -> ["GEUYR","G-EUYR","GE-UYR"]；9MMAS -> ["9MMAS","9M-MAS"]
+ */
+export function hyphenVariants(s) {
+  const out = new Set([s]);
+  if (!/^[A-Z0-9]+$/.test(s) || s.length < 4) return [...out];
+  if (/^[A-Z]/.test(s)) out.add(`${s[0]}-${s.slice(1)}`);        // G-EUYR / B-7973
+  if (/^[A-Z]{2}/.test(s)) out.add(`${s.slice(0, 2)}-${s.slice(2)}`); // VT-SUG / HL-7598
+  if (/^\d[A-Z]/.test(s)) out.add(`${s.slice(0, 2)}-${s.slice(2)}`);  // 9M-MAS / 4X-EAD
+  return [...out];
+}
+
+/**
+ * 查询 airport-data.com；自动尝试连字符变体（如用户输入 B7973 而无连字符）
+ * @param {string} reg 规范化后的注册号（可能带连字符）
+ */
+export async function queryAirportData(reg) {
+  const variants = hyphenVariants(reg);
+  let last = null;
+  for (const v of variants) {
+    const r = await fetchParse(v);
+    last = r;
+    if (r.ok && !r.notFound) return r; // 命中真实记录即返回
+  }
+  return last;
+}
+
+/**
+ * 解析单个注册号页面中的四类表格
+ */
+async function fetchParse(reg) {
+  const url = BASE + reg;
+  const res = await fetchURL(url, { timeout: 20000 });
+  if (res.status >= 400) {
+    return { ok: false, source: 'airport-data', http: res.status, error: `airport-data 返回 HTTP ${res.status}` };
+  }
+  const $ = cheerio.load(res.body);
+
+  const title = $('title').text();
+  const parsed = parseTitle(title);
+
+  // 未收录判断：标题以 "Add aircraft" 开头，或没有任何数据行
+  const bodyText = $('body').text();
+  const notFound =
+    /^\s*Add\s+aircraft/i.test(title) ||
+    (/currently\s+no\s+aircraft/i.test(bodyText)) ||
+    (/not\s+found/i.test(bodyText) && !/Aircraft Data/i.test(title));
+
+  const airframe = {};   // 表1
+  const details = {};    // 表2
+  const owner = {};      // 表3
+  const routes = [];     // 表0
+
+  // 实时段元信息（航空公司与状态徽标）在 data-live-section 里，表格外
+  const liveSection = $('[data-live-section]').first();
+  const liveBadge = liveSection.find('.badge').first();
+  const liveMeta = {
+    status: txt(liveBadge.text()),
+    airline: txt(liveBadge.parent().children('span.text-sm').first().text()),
+  };
+
+  $('table').each((_, tbl) => {
+    const rows = $(tbl).find('tr').toArray();
+    if (rows.length === 0) return;
+    const firstRowCells = $(rows[0]).find('td').toArray();
+    const firstCellText = txt($(firstRowCells[0]).text());
+    // 路由表：行含 data-label 且有 6 个 td
+    if ($(tbl).find('tr.js-live-history-row').length > 0) {
+      routes._meta = liveMeta;
+      $(tbl).find('tr.js-live-history-row').each((_, tr) => {
+        const $tr = $(tr);
+        const tds = $tr.find('td').toArray();
+        const routeCodes = txt($tr.find('span.block.cursor-help').first().text());
+        // 机场全名在下拉框的 .block.text-sm 里；用 text() 后按 → 分割
+        const namesEl = $tr.find('.dropdown-content .block.text-sm').first();
+        const routeNames = namesEl.length
+          ? txt(namesEl.text())
+          : txt($tr.find('.dropdown-content').first().text());
+        const [fromCode, toCode] = (routeCodes || '').split(/\s*→\s*/);
+        const nameParts = (routeNames || '').split(/\s*→\s*/);
+        const fromName = nameParts[0] || '';
+        const toName = nameParts.slice(1).join(' ') || '';
+        const callsign = txt($(tds[1]).text());
+        const [csMain, csNum] = callsign.split('/');
+        routes.push({
+          time: txt($(tds[0]).text()) || txt($tr.attr('data-time')),
+          callsign: txt(csMain),
+          flightNumber: txt(csNum),
+          level: txt($(tds[2]).text()),
+          speed: txt($(tds[3]).text()),
+          heading: txt($(tds[4]).text()) || $tr.attr('data-track'),
+          from: { code: fromCode || '', name: fromName || '' },
+          to: { code: toCode || '', name: toName || '' },
+          lat: $tr.attr('data-lat'),
+          lon: $tr.attr('data-lon'),
+          track: $tr.attr('data-track'),
+          label: txt($tr.attr('data-label')),
+          sub: txt($tr.attr('data-sub')),
+        });
+      });
+    } else if (firstCellText === 'Manufacturer') {
+      $(tbl).find('tr').each((_, tr) => {
+        const tds = $(tr).find('td').toArray();
+        if (tds.length >= 2) airframe[txt($(tds[0]).text())] = txt($(tds[1]).text()).replace(/Search all.*$/i, '').trim();
+      });
+    } else if (firstCellText === 'Registration Number') {
+      $(tbl).find('tr').each((_, tr) => {
+        const tds = $(tr).find('td').toArray();
+        if (tds.length >= 2) details[txt($(tds[0]).text())] = txt($(tds[1]).text());
+      });
+    } else if (firstCellText === 'Registration Type') {
+      $(tbl).find('tr').each((_, tr) => {
+        const tds = $(tr).find('td').toArray();
+        if (tds.length >= 2) owner[txt($(tds[0]).text())] = txt($(tds[1]).text());
+      });
+    }
+  });
+
+  const makeModel = (parsed ? parsed.fullType : '') || airframe['Model'] || '';
+  // 以标题中的完整类型为权威（避免复用注册号导致的旧记录混入），其余表格作为补充
+  const make = makeModel.trim().split(/\s+/).slice(0, -1).join(' '); // "Boeing" from "Boeing 777-223"
+  const model = makeModel.trim().split(/\s+/).slice(-1)[0];
+  const fullMake = make || airframe['Manufacturer'] || '';
+
+  // 从所有者地址尽量提取国家
+  const ownerAddr = owner['Address'] || '';
+  let country = '';
+  if (ownerAddr) {
+    const seg = ownerAddr.split(',').pop().replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim();
+    const tokens = seg.split(/\s+/);
+    country = tokens.length > 1 ? tokens.slice(1).join(' ') : seg; // 去掉州/省份缩写
+  }
+
+  // 从 Air Worthiness Test 或 Year built 推导机龄
+  const year = parsed ? parsed.year : Number(airframe['Year built']);
+  const airWorthiness = details['Air Worthiness Test'] || details['Certification Issued'] || '';
+  const firstFlightSource = airWorthiness ? airWorthiness.slice(0, 4) : (year ? String(year) : '');
+
+  return {
+    ok: !notFound,
+    notFound,
+    source: 'airport-data',
+    error: notFound ? '数据库中未收录该注册号' : undefined,
+    url,
+    registration: parsed ? parsed.registration : details['Registration Number'] || reg,
+    icao24: (details['Mode S (ICAO24) Code'] || '').toLowerCase(),
+    manufacturer: fullMake,
+    model: model || makeModel,
+    fullType: makeModel.trim(),
+    year,
+    ageKnownYear: Number(firstFlightSource) || year || null,
+    cn: parsed ? parsed.cn : airframe['Construction Number (C/N)'] || '',
+    aircraftType: airframe['Aircraft Type'] || '',
+    seats: airframe['Number of Seats'] ? Number(airframe['Number of Seats']) : null,
+    engines: airframe['Number of Engines'] ? Number(airframe['Number of Engines']) : null,
+    engineType: airframe['Engine Type'] || '',
+    engineFull: airframe['Engine Manufacturer and Model'] || '',
+    owner: owner['Owner'] || '',
+    ownerType: owner['Registration Type'] || '',
+    ownerAddress: ownerAddr,
+    region: owner['Region'] || '',
+    registrationType: details['Certification Class'] || owner['Registration Type'] || '',
+    status: details['Current Status'] || '',
+    certIssued: details['Certification Issued'] || '',
+    airWorthiness: airWorthiness,
+    lastAction: details['Last Action Taken'] || '',
+    country,
+    title,
+    airline: routes._meta ? routes._meta.airline : '',
+    liveStatus: routes._meta ? routes._meta.status : '',
+    routes,
+  };
+}

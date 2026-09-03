@@ -1,0 +1,15 @@
+{
+  "name": "aircraft-lookup",
+  "version": "1.0.0",
+  "description": "输入飞机注册号，显示机型号、机龄、执飞航线等信息",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.19.2"
+  }
+}

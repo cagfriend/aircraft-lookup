@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>航空器详情查询 · Aircraft Lookup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <div class="brand">
+        <span class="brand-mark">✈</span>
+        <span class="brand-text">航空器详情查询</span>
+      </div>
+      <p class="tagline">输入飞机注册号，即可查询机型、机龄与执飞航线</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="search">
+      <form id="searchForm" class="search-box">
+        <input id="regInput" class="search-input" type="text" autocomplete="off"
+               placeholder="例：N784AN · B-2001 · JA801A · G-EUYR" aria-label="飞机注册号" />
+        <button type="submit" class="search-btn" id="searchBtn">查询</button>
+        <span class="search-hint">支持 N/美制、B-中国、JA-日本、G-英国等格式</span>
+      </form>
+      <div id="loading" class="loading hidden">
+        <span class="spinner"></span> 正在从各数据源获取信息…
+      </div>
+      <div id="error" class="error hidden"></div>
+    </section>
+
+    <!-- 查询结果 -->
+    <section id="result" class="result hidden">
+      <!-- 主信息卡片：照片 + 关键信息 -->
+      <div class="card hero">
+        <div class="hero-photo">
+          <img id="photo" class="photo" alt="飞机照片" hidden />
+          <div id="photoFallback" class="photo-fallback">暂无照片</div>
+          <a id="photoLink" class="photo-credit" target="_blank" rel="noopener">查看原图</a>
+        </div>
+        <div class="hero-info">
+          <div class="reg-badge" id="regBadge"></div>
+          <h1 class="full-type" id="fullType">—</h1>
+          <div class="facts" id="facts"></div>
+        </div>
+      </div>
+
+      <!-- 信息网格 -->
+      <div class="grid">
+        <div class="card metric">
+          <h3>机龄</h3>
+          <div class="metric-value" id="ageValue">—</div>
+          <div class="metric-sub" id="yearValue"></div>
+        </div>
+        <div class="card metric">
+          <h3>制造商</h3>
+          <div class="metric-value" id="manufacturerValue">—</div>
+          <div class="metric-sub">机型代号</div>
+        </div>
+        <div class="card metric">
+          <h3>出厂号 (C/N)</h3>
+          <div class="metric-value" id="cnValue">—</div>
+          <div class="metric-sub">机身序号</div>
+        </div>
+        <div class="card metric">
+          <h3>注册国</h3>
+          <div class="metric-value" id="countryValue">—</div>
+          <div class="metric-sub" id="icaoValue"></div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <!-- 当前执飞航线 -->
+        <div class="card">
+          <h3 class="card-title">当前执飞航线</h3>
+          <div id="currentRoute" class="route-box"></div>
+          <div class="route-note" id="routeNote"></div>
+        </div>
+        <!-- 实时状态 -->
+        <div class="card">
+          <h3 class="card-title">实时状态 (ADS-B)</h3>
+          <div id="liveBox" class="live-box"></div>
+        </div>
+      </div>
+
+      <!-- 最近航线 -->
+      <div class="card">
+        <h3 class="card-title">最近执飞记录</h3>
+        <div class="row-note">部分航班源未提供起降机场，此时显示该航班的记录坐标及离它最近的机场。</div>
+        <div class="table-wrap">
+          <table class="routes-table">
+            <thead>
+              <tr><th>时间(UTC)</th><th>呼号</th><th>航班号</th><th>航段 / 坐标</th><th>速度</th><th>航向</th></tr>
+            </thead>
+            <tbody id="routesBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 技术信息 -->
+      <div class="card">
+        <h3 class="card-title">机型与注册技术信息</h3>
+        <div class="kv-grid" id="techInfo"></div>
+      </div>
+
+      <div class="sources" id="sources"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      数据来源：airport-data.com（机型/机龄/航线/注册信息） · planespotters.net（照片） · OpenSky Network ADS-B（实时位置）。
+      本工具仅供学习演示，数据以各源最新为准。
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
