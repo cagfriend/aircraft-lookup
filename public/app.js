@@ -1,6 +1,32 @@
 const $ = (sel) => document.querySelector(sel);
 
-// 仅当坐标距某机场 ≤ 该距离(km)时，才显示"最近机场"，否则回退显示坐标
+// ===== 主题切换 =====
+const THEME_KEY = 'aircraft-lookup-theme';
+const htmlEl = document.documentElement;
+const themeBtn = $('#themeToggle');
+
+function applyTheme(theme) {
+  if (theme === 'light') {
+    htmlEl.classList.add('light');
+    themeBtn.textContent = '☀️';
+    themeBtn.title = '切换到夜间主题';
+  } else {
+    htmlEl.classList.remove('light');
+    themeBtn.textContent = '🌙';
+    themeBtn.title = '切换到日间主题';
+  }
+}
+
+// 初始化：读取存储的主题偏好
+applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+
+themeBtn.addEventListener('click', () => {
+  const next = htmlEl.classList.contains('light') ? 'dark' : 'light';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+});
+
+// ===== 查询 =====
 const NEAR_KM = 10;
 
 const searchForm = $('#searchForm');
@@ -79,21 +105,32 @@ function render(d) {
     `<div class="fact"><div class="label">${esc(k)}</div><div class="value">${esc(v)}</div></div>`
   ).join('');
 
-  // photo —— 只显示一张主图
+  // photo —— 只显示一张主图；主图失败自动降级到缩略图
   const photoEl = $('#photo');
   const fb = $('#photoFallback');
   const credit = $('#photoLink');
+  const hideCredit = () => { credit.hidden = true; };
+  const setFallback = (msg) => { fb.textContent = msg; fb.hidden = false; photoEl.hidden = true; hideCredit(); };
+  const showPhoto = () => { photoEl.hidden = false; fb.hidden = true; credit.hidden = false; };
+
   if (d.photo && d.photo.url) {
-    // 加载失败时优雅回退到占位框
-    photoEl.onerror = () => { photoEl.hidden = true; fb.hidden = false; credit.hidden = true; };
-    photoEl.onload = () => { photoEl.hidden = false; fb.hidden = true; credit.hidden = false; };
-    photoEl.src = imgUrl(d.photo.url);
+    const candidates = [d.photo.url, d.photo.thumb].filter(Boolean);
+    let ci = 0;
+    hideCredit();
+    photoEl.onload = () => showPhoto();
+    photoEl.onerror = () => {
+      ci += 1;
+      if (ci < candidates.length) {
+        photoEl.src = imgUrl(candidates[ci]); // 换缩略图重试
+      } else {
+        setFallback('照片加载失败（图源暂时不可达）');
+      }
+    };
+    photoEl.src = imgUrl(candidates[0]);
     credit.href = d.photo.link || '#';
     credit.textContent = `图片来源 (${d.photo.count || 1} 张)`;
   } else {
-    photoEl.hidden = true;
-    fb.hidden = false;
-    credit.hidden = true;
+    setFallback('暂无照片');
   }
 
   // metrics

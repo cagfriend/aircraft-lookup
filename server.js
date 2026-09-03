@@ -52,7 +52,7 @@ app.get('/api/img', (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400');
     up.pipe(res);
   });
-  upstream.setTimeout(15000, () => upstream.destroy());
+  upstream.setTimeout(30000, () => upstream.destroy());
   upstream.on('error', () => res.status(502).json({ error: 'proxy failed' }));
   upstream.end();
 });
