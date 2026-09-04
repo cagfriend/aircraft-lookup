@@ -161,7 +161,7 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .row-note { color: var(--muted); font-size: 12.5px; margin: -8px 0 12px; }
 
 /* ===== Hero ===== */
-.hero { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; }
+.hero { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; position: relative; }
 .hero-photo { position: relative; }
 .photo {
   width: 300px; height: 200px; object-fit: cover;
@@ -251,6 +251,51 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+
+/* ===== 搜索历史 ===== */
+.history { padding: 6px 0 0; }
+.history-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+.history-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--card);
+  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.history-item:hover { border-color: var(--accent2); box-shadow: var(--shadow-sm); }
+.history-img {
+  width: 56px; height: 36px; object-fit: cover; border-radius: 6px;
+  background: var(--card2); flex-shrink: 0;
+}
+.history-img-empty {
+  background: var(--card2); display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 16px;
+}
+.history-img-empty::after { content: '✈'; }
+.history-info { flex: 1; min-width: 0; }
+.history-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.history-reg { font-weight: 600; font-size: 14px; }
+.history-type { font-size: 12px; color: var(--muted); }
+.history-sub { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-del {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 16px; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;
+  transition: background .15s, color .15s; line-height: 1;
+}
+.history-del:hover { color: var(--err); background: var(--err-bg); }
+
+/* ===== 刷新按钮 ===== */
+.refresh-btn {
+  position: absolute; top: 14px; right: 14px;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--card2); border: 1px solid var(--border);
+  font-size: 18px; cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  transition: background .15s, transform .15s, border-color .3s;
+}
+.refresh-btn:hover { background: var(--toggle-bg-hover); transform: scale(1.1); }
+.refresh-btn:active { transform: scale(0.95); }
+.refresh-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
 /* ===== 响应式 ===== */
 @media (max-width: 700px) {

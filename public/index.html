@@ -27,6 +27,7 @@
         <button type="submit" class="search-btn" id="searchBtn">查询</button>
         <span class="search-hint">支持 N/美制、B-中国、JA-日本、G-英国等格式</span>
       </form>
+      <div id="history" class="history"></div>
       <div id="loading" class="loading hidden">
         <span class="spinner"></span> 正在从各数据源获取信息…
       </div>
@@ -37,6 +38,7 @@
     <section id="result" class="result hidden">
       <!-- 主信息卡片：照片 + 关键信息 -->
       <div class="card hero">
+        <button id="refreshBtn" class="refresh-btn" title="刷新数据（忽略缓存）">🔄</button>
         <div class="hero-photo">
           <img id="photo" class="photo" alt="飞机照片" hidden />
           <div id="photoFallback" class="photo-fallback">暂无照片</div>

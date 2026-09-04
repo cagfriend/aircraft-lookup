@@ -26,6 +26,70 @@ themeBtn.addEventListener('click', () => {
   applyTheme(next);
 });
 
+// ===== 搜索历史 =====
+const HISTORY_KEY = 'aircraft-lookup-history';
+const MAX_HISTORY = 5;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; }
+}
+function saveHistory(h) { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); }
+function addToHistory(reg, aircraft, operator, photo) {
+  const h = loadHistory().filter(x => x.reg !== reg);
+  h.unshift({
+    reg,
+    type: aircraft?.fullType || '',
+    airline: operator?.airline || '',
+    year: aircraft?.year,
+    thumb: photo?.thumb || '',
+    time: Date.now()
+  });
+  saveHistory(h.slice(0, MAX_HISTORY));
+  renderHistory();
+}
+function removeFromHistory(reg) {
+  saveHistory(loadHistory().filter(x => x.reg !== reg));
+  renderHistory();
+}
+function renderHistory() {
+  const h = loadHistory();
+  const el = $('#history');
+  if (!h.length) { el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div class="history-label">最近搜索：</div>' +
+    '<div class="history-list">' +
+    h.map(x => {
+      const img = x.thumb
+        ? `<img class="history-img" src="${esc(imgUrl(x.thumb))}" onerror="this.outerHTML='&lt;div class=&quot;history-img history-img-empty&quot;&gt;&lt;/div&gt;'" alt="" />`
+        : '<div class="history-img history-img-empty"></div>';
+      const meta = [x.airline, x.year ? `${x.year} 年` : ''].filter(Boolean).join(' · ');
+      return `<div class="history-item" data-reg="${esc(x.reg)}">
+        ${img}
+        <div class="history-info">
+          <div class="history-main">
+            <span class="history-reg">${esc(x.reg)}</span>
+            <span class="history-type">${esc(x.type)}</span>
+          </div>
+          ${meta ? `<div class="history-sub">${esc(meta)}</div>` : ''}
+        </div>
+        <button class="history-del" data-del="${esc(x.reg)}" title="删除记录">×</button>
+      </div>`;
+    }).join('') +
+    '</div>';
+}
+$('#history').addEventListener('click', (e) => {
+  const del = e.target.closest('.history-del');
+  if (del) { e.stopPropagation(); removeFromHistory(del.dataset.del); return; }
+  const item = e.target.closest('.history-item');
+  if (item) { regInput.value = item.dataset.reg; runSearch(item.dataset.reg); }
+});
+
+// 刷新按钮（忽略缓存）
+$('#refreshBtn').addEventListener('click', () => {
+  const reg = $('#regBadge')?.textContent;
+  if (reg) runSearch(reg, { forceRefresh: true });
+});
+
 // ===== 查询 =====
 const NEAR_KM = 10;
 
@@ -44,14 +108,14 @@ searchForm.addEventListener('submit', async (e) => {
   await runSearch(regInput.value.trim());
 });
 
-async function runSearch(reg) {
+async function runSearch(reg, { forceRefresh = false } = {}) {
   if (!reg) { showError('请输入飞机注册号'); return; }
   hide(resultEl);
   hide(errorEl);
   show(loadingEl);
   searchBtn.disabled = true;
   try {
-    const url = `/api/query?reg=${encodeURIComponent(reg)}`;
+    const url = `/api/query?reg=${encodeURIComponent(reg)}${forceRefresh ? '&refresh=1' : ''}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok || !data.success) {
@@ -59,6 +123,7 @@ async function runSearch(reg) {
     }
     render(data);
     show(resultEl);
+    addToHistory(data.reg, data.aircraft, data.operator, data.photo);
   } catch (err) {
     showError(err.message || '查询失败，请稍后重试。');
   } finally {
@@ -288,7 +353,8 @@ function renderSources(s) {
   }).join('');
 }
 
-// 示例按钮支持
+// 初始化历史记录 + URL 参数自动查询
+renderHistory();
 if (window.location.search) {
   const p = new URLSearchParams(window.location.search);
   const q = p.get('reg') || p.get('q');
