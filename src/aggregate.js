@@ -4,6 +4,7 @@ import { queryAirportData } from './airportdata.js';
 import { queryPlanespotters } from './planespotters.js';
 import { queryOpenSky } from './opensky.js';
 import { nearestAirport } from './airports.js';
+import { queryFlightRoute } from './flightroute.js';
 
 /** 由出厂年份计算机龄 */
 function calcAge(year) {
@@ -50,6 +51,25 @@ export async function lookupAircraft(rawInput, opts = {}) {
 
   const year = ad.ok ? ad.ageKnownYear : null;
   const routes = ad.ok ? (ad.routes || []) : [];
+
+  // 补全缺失起降机场：用呼号联网查 FlightAware（限量避免拖慢响应）
+  if (ad.ok && routes.length) {
+    const MAX_FILL = 4; // 每次最多补全 4 条，平衡覆盖与响应速度
+    let filled = 0;
+    for (const r of routes) {
+      if (filled >= MAX_FILL) break;
+      const lacksRoute = (!r.from || !r.from.code) && (!r.to || !r.to.code);
+      if (!lacksRoute) continue;
+      if (!r.callsign) continue;
+      const fr = await queryFlightRoute(r.callsign).catch(() => null);
+      if (fr) {
+        r.from = r.from && r.from.code ? r.from : { code: fr.from.code, name: fr.from.name };
+        r.to = r.to && r.to.code ? r.to : { code: fr.to.code, name: fr.to.name };
+        filled += 1;
+      }
+    }
+  }
+
   const current = routes[0] || null;
 
   // OpenSky 覆盖不到时（如中国境内飞机），退而展示最近航班记录的坐标

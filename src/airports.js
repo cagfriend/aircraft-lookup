@@ -40,5 +40,25 @@ export function nearestAirport(lat, lon, opts = {}) {
   return best;
 }
 
+/** 按 ICAO 码查机场（大写匹配） */
+export function airportByIcao(icao) {
+  if (!icao) return null;
+  const code = String(icao).toUpperCase();
+  for (const a of AIRPORTS) {
+    if (a.icao && a.icao.toUpperCase() === code) return { ...a };
+  }
+  return null;
+}
+
+/** 按 IATA 码查机场（大写匹配） */
+export function airportByIata(iata) {
+  if (!iata) return null;
+  const code = String(iata).toUpperCase();
+  for (const a of AIRPORTS) {
+    if (a.iata && a.iata.toUpperCase() === code) return { ...a };
+  }
+  return null;
+}
+
 // 供调试：确认模块加载
 export const __count = AIRPORTS.length;
