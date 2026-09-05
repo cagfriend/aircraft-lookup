@@ -1,12 +1,6 @@
-// src/airports.js — 由坐标反查最近机场（基于 OurAirports 全球机场数据库）
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AIRPORTS = JSON.parse(
-  fs.readFileSync(path.join(__dirname, 'airports.json'), 'utf8'),
-);
+// src/airports.js — 机场坐标与 ICAO/IATA 反查（数据来自 airports.data.js）
+// 兼容 Node 与 Cloudflare Pages（不使用 fs）
+import AIRPORTS from './airports.data.js';
 
 /** 两坐标球面距离（公里），Haversine */
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -60,5 +54,5 @@ export function airportByIata(iata) {
   return null;
 }
 
-// 供调试：确认模块加载
+// 供调试：确认数据量
 export const __count = AIRPORTS.length;

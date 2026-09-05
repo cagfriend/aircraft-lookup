@@ -97,3 +97,30 @@ aircraft-lookup/
 - **访问频率**：为减轻外部数据源压力，后端对同一注册号做了 30 分钟结果缓存（`?refresh=1` 可强制刷新）。
 
 请遵守各数据源的使用条款。
+
+## 云部署（Cloudflare Pages）
+
+项目已适配 **Cloudflare Pages**（免费计划），静态前端在 `public/`，后端 API 在 `functions/`（Pages Functions）。
+
+### 部署步骤
+1. 代码推送到 GitHub（`cagfriend/aircraft-lookup`）
+2. 打开 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
+3. 授权并选择 `aircraft-lookup` 仓库 → **Begin setup**
+4. 构建设置：
+   - **Production branch**: `main`
+   - **Build command**: 留空
+   - **Build output directory**: `public`
+   - Framework preset 选 **None**
+5. **Save and Deploy**，等待约 1-2 分钟
+
+部署完成后访问 `https://<project>.pages.dev`。
+
+### 本地运行（不受影响）
+```bash
+npm start   # http://127.0.0.1:3000
+```
+`functions/` 仅 Cloudflare 使用；本地仍走 Express（`server.js`）。
+
+### 说明
+- `/api/img` 图片代理在 Cloudflare 上**只允许代理 planespotters 域名**（`functions/api/img.js` 白名单）。
+- airport-data.com 等源有反爬，若高频请求被临时 403，等一段时间即可恢复。
