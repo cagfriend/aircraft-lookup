@@ -98,29 +98,28 @@ aircraft-lookup/
 
 请遵守各数据源的使用条款。
 
-## 云部署（Cloudflare Pages）
+## 云部署（Cloudflare Workers）
 
-项目已适配 **Cloudflare Pages**（免费计划），静态前端在 `public/`，后端 API 在 `functions/`（Pages Functions）。
+项目已适配 **Cloudflare Workers**（免费计划）：静态前端在 `public/`（作为 assets），后端 API 在 `src/worker.js`（Worker 入口）。
 
 ### 部署步骤
 1. 代码推送到 GitHub（`cagfriend/aircraft-lookup`）
-2. 打开 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
-3. 授权并选择 `aircraft-lookup` 仓库 → **Begin setup**
-4. 构建设置：
-   - **Production branch**: `main`
+2. 打开 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create application**
+3. 选择 **Worker** → **Connect to Git** → 选 `aircraft-lookup` 仓库
+4. 配置：
    - **Build command**: 留空
-   - **Build output directory**: `public`
-   - Framework preset 选 **None**
-5. **Save and Deploy**，等待约 1-2 分钟
+   - **Deploy command**: `npx wrangler deploy`
+   - `wrangler.jsonc` 已声明 `main: src/worker.js` 与 `assets.directory: public`
+5. **Save and Deploy**，等待 1-2 分钟
 
-部署完成后访问 `https://<project>.pages.dev`。
+部署完成后访问 `https://aircraft-lookup.<你的子域>.workers.dev`。
 
 ### 本地运行（不受影响）
 ```bash
 npm start   # http://127.0.0.1:3000
 ```
-`functions/` 仅 Cloudflare 使用；本地仍走 Express（`server.js`）。
+本地仍走 Express（`server.js`）；`src/worker.js` 仅 Cloudflare 使用。
 
 ### 说明
-- `/api/img` 图片代理在 Cloudflare 上**只允许代理 planespotters 域名**（`functions/api/img.js` 白名单）。
+- `/api/img` 图片代理在 Cloudflare 上**只允许代理 planespotters 域名**（`src/worker.js` 白名单）。
 - airport-data.com 等源有反爬，若高频请求被临时 403，等一段时间即可恢复。

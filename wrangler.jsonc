@@ -1,8 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "aircraft-lookup",
+  "main": "src/worker.js",
   "compatibility_date": "2025-09-01",
-  "pages_build_output_dir": "public",
+  "assets": {
+    "directory": "public",
+    "not_found_handling": "single-page-application"
+  },
   "observability": {
     "enabled": true
   }
