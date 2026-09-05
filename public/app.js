@@ -232,6 +232,8 @@ function renderCurrentRoute(cr, a) {
       <div class="route-end"><div class="code">${esc(cr.from.code || '—')}</div><div class="name">${esc(fromName)}</div></div>
       <div class="route-arrow">✈ →</div>
       <div class="route-end"><div class="code">${esc(cr.to.code || '—')}</div><div class="name">${esc(toName)}</div></div>`;
+  } else if (cr.callsign) {
+    routeHtml = `<div class="route-q-wrap"><button class="route-q-btn" type="button" data-callsign="${esc(cr.callsign)}">🔍 查询该航班起降机场</button></div>`;
   } else if (nearOk(cr.near)) {
     routeHtml = `<div class="route-meta" style="margin-top:0"><span>最近机场：<b>${esc(nearText(cr.near))}</b></span></div>`;
   }
@@ -298,9 +300,12 @@ function renderRoutes(routes) {
   }
   tb.innerHTML = routes.map((r) => {
     const hasRoute = r.from.code || r.to.code;
+    const canQuery = !hasRoute && (r.callsign || r.flightNumber);
     let seg;
     if (hasRoute) {
       seg = `${r.from.code ? `${r.from.code} ${r.from.name || ''}` : ''}${r.from.code && r.to.code ? ' → ' : ''}${r.to.code ? `${r.to.code} ${r.to.name || ''}` : ''}`;
+    } else if (canQuery) {
+      seg = `<button class="route-q-btn" type="button" data-callsign="${esc(r.callsign || r.flightNumber)}">🔍 查起降机场</button>`;
     } else if (r.near && r.near.distKm <= NEAR_KM) {
       seg = `近 ${r.near.iata} ${r.near.name || r.near.city || ''} (~${r.near.distKm}km)`;
     } else if (r.lat != null && r.lon != null) {
@@ -312,7 +317,7 @@ function renderRoutes(routes) {
       <td>${esc(r.time || '')}</td>
       <td>${esc(r.callsign || '—')}</td>
       <td>${esc(r.flightNumber || '—')}</td>
-      <td class="fromto">${esc(seg)}</td>
+      <td class="fromto">${seg}</td>
       <td>${esc(r.speed || '—')}</td>
       <td>${esc(r.heading || '—')}</td>
     </tr>`;
@@ -352,6 +357,43 @@ function renderSources(s) {
     return `<span class="src ${ok ? 'ok' : 'bad'}">${esc(labels[k] || k)}：${esc(ok ? '可用' : v)}</span>`;
   }).join('');
 }
+
+// ===== 单条航班起降机场查询（用户点击按钮）=====
+async function queryRouteOnClick(btn) {
+  const callsign = btn.dataset.callsign;
+  if (!callsign) return;
+  btn.disabled = true;
+  btn.textContent = '查询中…';
+  try {
+    const res = await fetch(`/api/route?callsign=${encodeURIComponent(callsign)}`);
+    const data = await res.json();
+    if (res.ok && data.success && data.from && data.to) {
+      const txt = `${data.from.code} ${data.from.name || ''}  →  ${data.to.code} ${data.to.name || ''}`;
+      // 找到容纳该按钮的容器（当前航线卡片或表格单元格）
+      const zone = btn.closest('.route-q-wrap') || btn.closest('td');
+      if (zone) {
+        zone.innerHTML = `<span class="route-filled">✈ ${esc(txt)}</span>`;
+      } else {
+        btn.textContent = txt;
+        btn.disabled = false;
+      }
+    } else {
+      btn.textContent = '未查到，重试';
+      btn.disabled = false;
+      btn.classList.add('err');
+    }
+  } catch (e) {
+    btn.textContent = '查询失败，重试';
+    btn.disabled = false;
+    btn.classList.add('err');
+  }
+}
+
+// 事件委托：整页监听按钮点击（表格行与当前航线都可能出现）
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.route-q-btn');
+  if (btn) queryRouteOnClick(btn);
+});
 
 // 初始化历史记录 + URL 参数自动查询
 renderHistory();

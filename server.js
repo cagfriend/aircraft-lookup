@@ -5,6 +5,7 @@ import dns from 'node:dns';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lookupAircraft } from './src/aggregate.js';
+import { queryFlightRoute } from './src/flightroute.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +27,20 @@ app.get('/api/query', async (req, res) => {
     if (!data.success) return res.status(404).json(data);
     res.set('Cache-Control', 'public, max-age=300');
     res.json(data);
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// 按呼号查询航班起降机场（用户点击"查询起降机场"按钮时调用）
+app.get('/api/route', async (req, res) => {
+  const cs = String(req.query.callsign || '').trim().toUpperCase();
+  if (!cs) return res.status(400).json({ success: false, error: '缺少呼号' });
+  try {
+    const route = await queryFlightRoute(cs);
+    if (!route) return res.status(404).json({ success: false, error: '未查到该航班信息' });
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json({ success: true, callsign: cs, from: route.from, to: route.to, icaoFrom: route.icaoFrom, icaoTo: route.icaoTo });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

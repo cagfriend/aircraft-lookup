@@ -208,6 +208,23 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .route-meta span b { color: var(--text); }
 .route-note { margin-top: 12px; color: var(--muted); font-size: 13px; }
 
+/* 按需查询起降机场按钮 */
+.route-q-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 12px; border-radius: 999px; font-size: 12.5px;
+  background: color-mix(in srgb, var(--accent2) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 40%, transparent);
+  color: var(--accent2); cursor: pointer; white-space: nowrap;
+  transition: background .15s, transform .05s;
+}
+.route-q-btn:hover { background: color-mix(in srgb, var(--accent2) 22%, transparent); }
+.route-q-btn:active { transform: translateY(1px); }
+.route-q-btn:disabled { opacity: .6; cursor: wait; }
+.route-q-btn.err { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); background: var(--err-bg); }
+.route-q-wrap { display: flex; align-items: center; }
+.route-filled { color: var(--ok); font-size: 14px; font-weight: 600; }
+.route-filled .air { color: var(--accent2); }
+
 /* ===== Live Box ===== */
 .live-box { display: flex; flex-wrap: wrap; gap: 12px; }
 .live-chip {
