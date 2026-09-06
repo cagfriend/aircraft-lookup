@@ -1,7 +1,6 @@
 const $ = (sel) => document.querySelector(sel);
 
 // ===== 主题切换 =====
-const THEME_KEY = 'aircraft-lookup-theme';
 const htmlEl = document.documentElement;
 const themeBtn = $('#themeToggle');
 
@@ -26,14 +25,14 @@ function scheduledTheme() {
   return localHour >= 6 && localHour < 19 ? 'light' : 'dark';
 }
 
-// 初始化主题：先看是否存了"手动偏好"；没有则按定时(北京时间 6-19 = 白)
-const savedTheme = localStorage.getItem(THEME_KEY);
-applyTheme(savedTheme || scheduledTheme());
+// 初始化主题：严格按时间规则（北京时间 6:00-19:00 = 浅色，其余 = 深色），
+// 不读取本地缓存 / 浏览历史中的旧偏好，刷新或重开页面一律按当前时间决定。
+applyTheme(scheduledTheme());
 
-// 手动切换：写入 localStorage 作为覆盖(会话内优先于定时)
+// 手动切换：仅改变当前页面的主题，不写入 localStorage。
+// 只有用户点击按钮才会发生变更；下次加载页面时仍按时间规则恢复默认。
 themeBtn.addEventListener('click', () => {
   const next = htmlEl.classList.contains('light') ? 'dark' : 'light';
-  localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
 });
 
