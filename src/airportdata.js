@@ -9,6 +9,54 @@ function txt(s) {
 }
 
 /**
+ * 根据注册号前缀推断国家/地区（注册号体系国际标准，前缀对应国家）。
+ * 用于所有者地址缺失或解析失败时的兜底，尤其针对 B-（中国民航）等。
+ * @param {string} reg 注册号，如 B18001 / N784AN / JA801A
+ * @returns {string} 国家/地区名，未识别返回 ''
+ */
+export function countryFromRegistration(reg) {
+  const r = (reg || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!r) return '';
+  if (/^B\d{4}/.test(r)) return '中国(China)';
+  if (/^N\d/.test(r)) return '美国(USA)';
+  if (/^JA\d/.test(r)) return '日本(Japan)';
+  if (/^G-?[A-Z]/.test(r) && r.length >= 5) return '英国(UK)';
+  if (/^D-?[A-Z]/.test(r)) return '德国(Germany)';
+  if (/^F-?[A-Z]/.test(r) || /^F-?\d/.test(r)) return '法国(France)';
+  if (/^HL\d/.test(r)) return '韩国(South Korea)';
+  if (/^9M/.test(r)) return '马来西亚(Malaysia)';
+  if (/^VT/.test(r)) return '印度(India)';
+  if (/^A6/.test(r)) return '阿联酋(UAE)';
+  if (/^5B/.test(r)) return '塞浦路斯(Cyprus)';
+  if (/^4X/.test(r)) return '以色列(Israel)';
+  if (/^PH/.test(r)) return '荷兰(Netherlands)';
+  if (/^EC/.test(r)) return '西班牙(Spain)';
+  if (/^EI/.test(r)) return '爱尔兰(Ireland)';
+  if (/^SE/.test(r)) return '瑞典(Sweden)';
+  if (/^LN/.test(r)) return '挪威(Norway)';
+  if (/^OY/.test(r)) return '丹麦(Denmark)';
+  if (/^SP/.test(r)) return '波兰(Poland)';
+  if (/^OK/.test(r)) return '捷克(Czechia)';
+  if (/^HB/.test(r)) return '瑞士(Switzerland)';
+  if (/^YV/.test(r)) return '委内瑞拉(Venezuela)';
+  if (/^YR/.test(r)) return '罗马尼亚(Romania)';
+  if (/^9V/.test(r)) return '新加坡(Singapore)';
+  if (/^C-[FG]/.test(r)) return '加拿大(Canada)';
+  if (/^VH/.test(r)) return '澳大利亚(Australia)';
+  if (/^ZK/.test(r)) return '新西兰(New Zealand)';
+  if (/^PK/.test(r)) return '印度尼西亚(Indonesia)';
+  if (/^HS/.test(r)) return '泰国(Thailand)';
+  if (/^RP/.test(r)) return '菲律宾(Philippines)';
+  if (/^RA/.test(r) || /^RF/.test(r) || /^RD/.test(r)) return '俄罗斯(Russia)';
+  if (/^UR-?[A-Z]/.test(r)) return '乌克兰(Ukraine)';
+  if (/^TC/.test(r)) return '土耳其(Turkey)';
+  if (/^5N/.test(r)) return '尼日利亚(Nigeria)';
+  if (/^ZS/.test(r) || /^ZU/.test(r) || /^ZT/.test(r)) return '南非(South Africa)';
+  if (/^CN-?[A-Z]/.test(r) || /^CN-?\d/.test(r)) return '摩洛哥(Morocco)';
+  return '';
+}
+
+/**
  * 解析标题 "Aircraft Data N784AN, 2000 Boeing 777-223, c/n 29588"
  */
 function parseTitle(title) {
@@ -162,6 +210,10 @@ async function fetchParse(reg) {
     const seg = ownerAddr.split(',').pop().replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim();
     const tokens = seg.split(/\s+/);
     country = tokens.length > 1 ? tokens.slice(1).join(' ') : seg; // 去掉州/省份缩写
+  }
+  // 兜底：所有者地址缺失/解析失败时，用注册号前缀推断国家/地区（如 B- 即中国）
+  if (!country || country.length === 0) {
+    country = countryFromRegistration(reg);
   }
 
   // 从 Air Worthiness Test 或 Year built 推导机龄

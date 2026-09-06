@@ -53,38 +53,6 @@ export default {
       return json({ ok: true, time: new Date().toISOString() });
     }
 
-    // 临时调试：抓 airport-data 页面，分析是否存在多个构造表（复用注册号）
-    if (path === '/api/debug') {
-      const reg = String(url.searchParams.get('reg') || '').toUpperCase();
-      try {
-        const html = await fetch('https://airport-data.com/aircraft/' + encodeURIComponent(reg), {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          redirect: 'follow',
-        });
-        const text = await html.text();
-        const title = (text.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '';
-        // 收集所有"Manufacturer"开头的构造表及其 cn/engine
-        const tables = [];
-        // 粗略切分：找到所有包含 Manufacturer 的表块
-        let idx = 0;
-        const re = /<table[\s\S]*?<\/table>/g;
-        let m;
-        while ((m = re.exec(text))) {
-          const tbl = m[0];
-          if (/Manufacturer/.test(tbl)) {
-            const cn = (tbl.match(/Construction Number \(C\/N\)[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/) || [])[1] || '';
-            const engine = (tbl.match(/Engine Manufacturer and Model[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/) || [])[1] || '';
-            const manuf = (tbl.match(/Manufacturer<\/td>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/) || [])[1] || '';
-            const model = (tbl.match(/<td[^>]*>Model<\/td>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/) || [])[1] || '';
-            tables.push({ manuf: manuf.replace(/\s+/g,' ').trim(), model: model.replace(/\s+/g,' ').trim(), cn: cn.replace(/\s+/g,' ').trim(), engine: engine.replace(/\s+/g,' ').trim() });
-          }
-        }
-        return json({ reg, title: title.replace(/\s+/g,' '), tables, tableCount: tables.length });
-      } catch (e) {
-        return json({ error: e.message }, 500);
-      }
-    }
-
     // /api/query
     if (path === '/api/query') {
       const reg = url.searchParams.get('reg') || url.searchParams.get('q');
