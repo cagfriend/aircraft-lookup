@@ -70,6 +70,7 @@ async function fetchParse(reg) {
   const details = {};    // 表2
   const owner = {};      // 表3
   const routes = [];     // 表0
+  const airframeCandidates = []; // 多个构造表(复用注册号时会有多个)
 
   // 实时段元信息（航空公司与状态徽标）在 data-live-section 里，表格外
   const liveSection = $('[data-live-section]').first();
@@ -119,10 +120,13 @@ async function fetchParse(reg) {
         });
       });
     } else if (firstCellText === 'Manufacturer') {
+      // 每张构造表独立收集，避免复用注册号时不同飞机的字段串到一起
+      const one = {};
       $(tbl).find('tr').each((_, tr) => {
         const tds = $(tr).find('td').toArray();
-        if (tds.length >= 2) airframe[txt($(tds[0]).text())] = txt($(tds[1]).text()).replace(/Search all.*$/i, '').trim();
+        if (tds.length >= 2) one[txt($(tds[0]).text())] = txt($(tds[1]).text()).replace(/Search all.*$/i, '').trim();
       });
+      airframeCandidates.push(one);
     } else if (firstCellText === 'Registration Number') {
       $(tbl).find('tr').each((_, tr) => {
         const tds = $(tr).find('td').toArray();
@@ -135,6 +139,15 @@ async function fetchParse(reg) {
       });
     }
   });
+
+  // 若存在多个构造表（复用注册号），选与标题中 C/N 一致的那张；
+  // 否则仍匹配到多个时，回退用第一张（最可能对应当前记录）。
+  if (airframeCandidates.length) {
+    const targetCn = parsed ? parsed.cn : '';
+    const byCn = airframeCandidates.find((c) => c['Construction Number (C/N)'] && targetCn && String(c['Construction Number (C/N)']).trim() === String(targetCn).trim());
+    const chosen = byCn || airframeCandidates[0];
+    Object.assign(airframe, chosen);
+  }
 
   const makeModel = (parsed ? parsed.fullType : '') || airframe['Model'] || '';
   // 以标题中的完整类型为权威（避免复用注册号导致的旧记录混入），其余表格作为补充
