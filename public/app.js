@@ -17,9 +17,20 @@ function applyTheme(theme) {
   }
 }
 
-// 初始化：读取存储的主题偏好
-applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+// 按北京时间(GMT+8)返回"定时默认主题"：6:00-19:00 白色，其余黑色
+function scheduledTheme() {
+  const now = new Date();
+  // 转成 GMT+8 的小时
+  const utcHour = now.getUTCHours();           // UTC 小时(0-23)
+  const localHour = (utcHour + 8) % 24;        // GMT+8 小时
+  return localHour >= 6 && localHour < 19 ? 'light' : 'dark';
+}
 
+// 初始化主题：先看是否存了"手动偏好"；没有则按定时(北京时间 6-19 = 白)
+const savedTheme = localStorage.getItem(THEME_KEY);
+applyTheme(savedTheme || scheduledTheme());
+
+// 手动切换：写入 localStorage 作为覆盖(会话内优先于定时)
 themeBtn.addEventListener('click', () => {
   const next = htmlEl.classList.contains('light') ? 'dark' : 'light';
   localStorage.setItem(THEME_KEY, next);
@@ -285,7 +296,7 @@ function renderLive(live) {
     ['应答机', live.squawk || '—'],
     ['位置', gps],
     ['最近机场', nearOk(live.near) ? nearText(live.near) : '—'],
-    ['起飞国', live.originCountry || '—'],
+    ['国家与地区', live.originCountry || '—'],
   ];
   box.innerHTML = `<span class="badge-status on">在空中</span>` + chips.map(([k, v]) =>
     `<div class="live-chip"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`
