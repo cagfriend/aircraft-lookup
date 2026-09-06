@@ -308,6 +308,7 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
   background: var(--card2); border: 1px solid var(--border);
   font-size: 18px; cursor: pointer; display: flex;
   align-items: center; justify-content: center;
+  z-index: 2;
   transition: background .15s, transform .15s, border-color .3s;
 }
 .refresh-btn:hover { background: var(--toggle-bg-hover); transform: scale(1.1); }
