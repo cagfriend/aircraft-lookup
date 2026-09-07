@@ -75,7 +75,17 @@ export default {
       try {
         const route = await queryFlightRoute(cs);
         if (!route) return json({ success: false, error: '未查到该航班信息' }, 404);
-        return json({ success: true, callsign: cs, from: route.from, to: route.to, icaoFrom: route.icaoFrom, icaoTo: route.icaoTo });
+        return json({
+          success: true, callsign: cs,
+          from: route.from, to: route.to,
+          icaoFrom: route.icaoFrom, icaoTo: route.icaoTo,
+          // filed route（航路详情，可能为空）
+          route: route.route || '',
+          routeAltitude: route.routeAltitude ?? null,
+          routeSpeed: route.routeSpeed ?? null,
+          fuelBurn: route.fuelBurn || null,
+          distance: route.distance ?? null,
+        });
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }

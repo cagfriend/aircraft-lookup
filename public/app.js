@@ -378,13 +378,23 @@ async function queryRouteOnClick(btn) {
     const res = await fetch(`/api/route?callsign=${encodeURIComponent(callsign)}`);
     const data = await res.json();
     if (res.ok && data.success && data.from && data.to) {
-      const txt = `${data.from.code} ${data.from.name || ''}  →  ${data.to.code} ${data.to.name || ''}`;
-      // 找到容纳该按钮的容器（当前航线卡片或表格单元格）
+      const fromLabel = data.from.code ? `${data.from.code} ${data.from.name || ''}` : (data.from.name || '');
+      const toLabel   = data.to.code   ? `${data.to.code} ${data.to.name || ''}`   : (data.to.name || '');
+      let html = `<span class="route-filled">✈ ${esc(fromLabel)} → ${esc(toLabel)}</span>`;
+      // 展示 filed route（航路点+航路编码）及其他飞行计划详情
+      if (data.route) {
+        const metaParts = [];
+        if (data.routeAltitude) metaParts.push(`FL${data.routeAltitude}`);
+        if (data.distance)      metaParts.push(`${data.distance} nm`);
+        html += `<div class="route-detail"><span class="route-airway">${esc(data.route)}</span>`
+             + (metaParts.length ? ` <span class="route-meta-info">(${esc(metaParts.join(' · '))})</span>` : '')
+             + `</div>`;
+      }
       const zone = btn.closest('.route-q-wrap') || btn.closest('td');
       if (zone) {
-        zone.innerHTML = `<span class="route-filled">✈ ${esc(txt)}</span>`;
+        zone.innerHTML = html;
       } else {
-        btn.textContent = txt;
+        btn.textContent = `${fromLabel} → ${toLabel}`;
         btn.disabled = false;
       }
     } else {

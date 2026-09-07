@@ -40,7 +40,17 @@ app.get('/api/route', async (req, res) => {
     const route = await queryFlightRoute(cs);
     if (!route) return res.status(404).json({ success: false, error: '未查到该航班信息' });
     res.set('Cache-Control', 'public, max-age=3600');
-    res.json({ success: true, callsign: cs, from: route.from, to: route.to, icaoFrom: route.icaoFrom, icaoTo: route.icaoTo });
+    res.json({
+      success: true, callsign: cs,
+      from: route.from, to: route.to,
+      icaoFrom: route.icaoFrom, icaoTo: route.icaoTo,
+      // filed route（航路详情，可能为空）
+      route: route.route || '',
+      routeAltitude: route.routeAltitude ?? null,
+      routeSpeed: route.routeSpeed ?? null,
+      fuelBurn: route.fuelBurn || null,
+      distance: route.distance ?? null,
+    });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
