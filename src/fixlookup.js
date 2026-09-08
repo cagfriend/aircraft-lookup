@@ -1,8 +1,17 @@
 // src/fixlookup.js — 通过 OpenNav API 在线补充本地数据库未收录的航路点
 // 需设置环境变量 OPENNAV_TOKEN（在 opennav.ai 注册获取）。未配置时返回 null，不阻断前端。
 
-const OPENNAV_API_BASE = process.env.OPENNAV_API_BASE || 'https://opennav.ai';
-const OPENNAV_TOKEN = process.env.OPENNAV_TOKEN || '';
+// 读取环境变量：Node(本地) 用 process.env；Cloudflare Worker 无 process，从 globalThis.env 读；均为空则禁用
+function env(name) {
+  try {
+    if (typeof process !== 'undefined' && process.env) return process.env[name] || '';
+    if (typeof globalThis !== 'undefined' && globalThis.env) return globalThis.env[name] || '';
+  } catch (e) { /* ignore */ }
+  return '';
+}
+
+const OPENNAV_API_BASE = env('OPENNAV_API_BASE') || 'https://opennav.ai';
+const OPENNAV_TOKEN = env('OPENNAV_TOKEN') || '';
 
 // 简单查询缓存
 const cache = new Map();
