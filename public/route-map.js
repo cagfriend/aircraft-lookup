@@ -17,9 +17,20 @@
   let routeLayer = null;
   let fetchSeq = 0; // 防止过期请求覆盖新请求
 
-  const TILE_URL =
-    'https://wprd{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}';
-  const TILE_SUBDOMAINS = ['1', '2', '3', '4'];
+  // 地图瓦片源（按序降级）：高德(国内直连) → OSM(全球兜底)
+  const TILE_SETS = [
+    {
+      url: 'https://wprd{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+      opts: { subdomains: ['1', '2', '3', '4'], maxZoom: 18 },
+      label: '高德',
+    },
+    {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      opts: { subdomains: ['a', 'b', 'c'], maxZoom: 19 },
+      label: 'OSM',
+    },
+  ];
+  let tileSourceIdx = 0;
 
   // 注入地图标记样式（避免动 style.css）
   const styleEl = document.createElement('style');
@@ -112,11 +123,30 @@
   }
 
   // ---- Leaflet 初始化（弹层显示后再建，否则容器尺寸为 0）----
+  function addTileSource() {
+    const set = TILE_SETS[tileSourceIdx];
+    const layer = L.tileLayer(set.url, set.opts).addTo(map);
+    L.control.attribution({ prefix: false }).addAttribution(
+      '地图 © ' + set.label + (tileSourceIdx === 0 ? ' · 高德' : ' · OpenStreetMap')
+    ).addTo(map);
+    let errors = 0;
+    layer.on('tileerror', function () {
+      errors += 1;
+      // 连续多次加载失败 → 自动切换到下一瓦片源
+      if (errors >= 4 && tileSourceIdx < TILE_SETS.length - 1) {
+        map.removeLayer(layer);
+        tileSourceIdx += 1;
+        addTileSource();
+      }
+    });
+    return layer;
+  }
+
   function initMap() {
     if (map) return map;
     map = L.map('routeMap', { zoomControl: false, attributionControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer(TILE_URL, { subdomains: TILE_SUBDOMAINS, maxZoom: 18 }).addTo(map);
+    addTileSource();
     return map;
   }
 
