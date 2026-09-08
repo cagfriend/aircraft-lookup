@@ -22,8 +22,11 @@
 | airportdata.js | airport-data.com | 机型/机龄/出厂号/发动机/所有者/ICAO24/执飞航线（核心） |
 | planespotters.js | planespotters.net | 照片 |
 | opensky.js | OpenSky Network | ADS-B 实时位置（按 ICAO24） |
-| flightroute.js | FlightAware | 按呼号**按需**补全起降机场 |
+| flightroute.js | FlightAware | 按呼号**按需**补全起降机场 + filed route（航路点/高度/速度/燃油） |
 | airports.js (+airports.data.js) | OurAirports | 9057 机场坐标 → 最近机场匹配 |
+| fixlookup.js | OpenNav（可选，需 OPENNAV_TOKEN） | 在线补充 **非美国航路点**（南美/欧洲等）坐标 |
+
+- **航路点数据库**：`public/data/fixes.data.js`（约 3.3MB，client 端懒加载）。由 FAA fixes(67610) + OurAirports navaids(11008) + OpenNav 抓取(51043) 合并去重生成，约 11.5 万个 ident，同名多点保存多个坐标（前端按航线中点就近选择）。前端 route-map.js 用它把 filed route 里的名称航路点转成真实位置；未收录点再走 /api/fix（OpenNav）在线查，仍无则大圆示意兜底。
 
 - `aggregate.js`：编排+机龄计算+缓存(30min)+最近机场+国家。
 - `fetch.js`：HTTP 客户端，**双环境**（Node 用 https+IPv4；Cloudflare 用全局 fetch）。
