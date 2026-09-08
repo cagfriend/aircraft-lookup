@@ -328,6 +328,81 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .refresh-btn:active { transform: scale(0.95); }
 .refresh-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
+/* ===== 可点击航段（打开航路地图） ===== */
+.seg-click {
+  cursor: pointer; border-radius: 8px; padding: 2px 4px; margin: -2px -4px;
+  transition: background .15s;
+}
+.seg-click:hover { background: color-mix(in srgb, var(--accent2) 10%, transparent); }
+.seg-click::after { content: ' 🗺'; font-size: 11px; opacity: .7; }
+
+/* ===== 航路地图弹层 ===== */
+.route-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.route-modal.hidden { display: none !important; }
+.route-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow);
+  width: min(760px, 100%); max-height: 90vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.route-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 8px;
+}
+.route-card-title { font-size: 17px; font-weight: 700; }
+.route-card-sub {
+  padding: 0 18px 10px; font-size: 12.5px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+}
+.route-card-close {
+  border: none; background: var(--card2); color: var(--text);
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+  font-size: 18px; line-height: 1; flex-shrink: 0;
+  transition: background .15s;
+}
+.route-card-close:hover { background: var(--toggle-bg-hover); }
+.route-map {
+  width: 100%; height: 380px; min-height: 260px;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: #e8eef6; z-index: 0;
+}
+.route-card-body {
+  padding: 12px 18px 16px; font-size: 13px; color: var(--muted);
+  max-height: 30vh; overflow-y: auto;
+}
+.route-card-body .tip { font-size: 12px; color: var(--muted); }
+.route-waypoints {
+  margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 6px;
+}
+.route-wpt {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+  background: var(--card2); border: 1px solid var(--border);
+  color: var(--accent2);
+}
+.route-wpt.coord {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--ok); cursor: default;
+}
+.route-wpt.airport {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+.route-wpt .coord-tip { font-size: 10px; color: var(--muted); display: block; }
+.route-metric-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12.5px; }
+
+/* 地图暗色主题适配（Leaflet 瓦片反色） */
+html:not(.light) .route-map .leaflet-tile {
+  filter: brightness(.65) invert(1) contrast(1.2) hue-rotate(180deg);
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 700px) {
   .hero { grid-template-columns: 1fr; }
@@ -335,4 +410,5 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
   .grid.two { grid-template-columns: 1fr; }
   .brand-text { font-size: 24px; }
   .theme-toggle { top: 12px; right: 12px; width: 36px; height: 36px; font-size: 18px; }
+  .route-map { height: 300px; }
 }

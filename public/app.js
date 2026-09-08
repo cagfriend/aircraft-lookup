@@ -238,12 +238,17 @@ function renderCurrentRoute(cr, a) {
   if (cr.from.code || cr.to.code) {
     const fromName = cr.from.name || cr.from.code || '';
     const toName = cr.to.name || cr.to.code || '';
-    routeHtml = `
-      <div class="route-end"><div class="code">${esc(cr.from.code || '—')}</div><div class="name">${esc(fromName)}</div></div>
-      <div class="route-arrow">✈ →</div>
-      <div class="route-end"><div class="code">${esc(cr.to.code || '—')}</div><div class="name">${esc(toName)}</div></div>`;
+    // 有呼号 → 航段可点击，点击展开页面内航路地图卡片
+    const leg = (code, name) => {
+      const inner = `<div class="code">${esc(code)}</div><div class="name">${esc(name)}</div>`;
+      if (!cr.callsign) return `<div class="route-end">${inner}</div>`;
+      return `<div class="route-end seg-click" data-callsign="${esc(cr.callsign)}" title="点击查看航路地图">${inner}</div>`;
+    };
+    routeHtml = leg(cr.from.code || '—', fromName) +
+      '<div class="route-arrow">✈ →</div>' +
+      leg(cr.to.code || '—', toName);
   } else if (cr.callsign) {
-    routeHtml = `<div class="route-q-wrap"><button class="route-q-btn" type="button" data-callsign="${esc(cr.callsign)}">🔍 查询该航班起降机场</button></div>`;
+    routeHtml = `<div class="route-q-wrap"><button class="route-q-btn" type="button" data-callsign="${esc(cr.callsign)}">🗺 查看航路地图</button></div>`;
   } else if (nearOk(cr.near)) {
     routeHtml = `<div class="route-meta" style="margin-top:0"><span>最近机场：<b>${esc(nearText(cr.near))}</b></span></div>`;
   }
@@ -313,9 +318,13 @@ function renderRoutes(routes) {
     const canQuery = !hasRoute && (r.callsign || r.flightNumber);
     let seg;
     if (hasRoute) {
-      seg = `${r.from.code ? `${r.from.code} ${r.from.name || ''}` : ''}${r.from.code && r.to.code ? ' → ' : ''}${r.to.code ? `${r.to.code} ${r.to.name || ''}` : ''}`;
+      const legTxt = `${r.from.code ? `${r.from.code} ${r.from.name || ''}` : ''}${r.from.code && r.to.code ? ' → ' : ''}${r.to.code ? `${r.to.code} ${r.to.name || ''}` : ''}`;
+      // 有呼号 → 航段可点击，点击展开航路地图
+      seg = r.callsign
+        ? `<span class="seg-click" data-callsign="${esc(r.callsign)}" title="点击查看航路地图">${esc(legTxt)}</span>`
+        : esc(legTxt);
     } else if (canQuery) {
-      seg = `<button class="route-q-btn" type="button" data-callsign="${esc(r.callsign || r.flightNumber)}">🔍 查起降机场</button>`;
+      seg = `<button class="route-q-btn" type="button" data-callsign="${esc(r.callsign || r.flightNumber)}">🗺 查看航路地图</button>`;
     } else if (r.near && r.near.distKm <= NEAR_KM) {
       seg = `近 ${r.near.iata} ${r.near.name || r.near.city || ''} (~${r.near.distKm}km)`;
     } else if (r.lat != null && r.lon != null) {
@@ -368,52 +377,8 @@ function renderSources(s) {
   }).join('');
 }
 
-// ===== 单条航班起降机场查询（用户点击按钮）=====
-async function queryRouteOnClick(btn) {
-  const callsign = btn.dataset.callsign;
-  if (!callsign) return;
-  btn.disabled = true;
-  btn.textContent = '查询中…';
-  try {
-    const res = await fetch(`/api/route?callsign=${encodeURIComponent(callsign)}`);
-    const data = await res.json();
-    if (res.ok && data.success && data.from && data.to) {
-      const fromLabel = data.from.code ? `${data.from.code} ${data.from.name || ''}` : (data.from.name || '');
-      const toLabel   = data.to.code   ? `${data.to.code} ${data.to.name || ''}`   : (data.to.name || '');
-      let html = `<span class="route-filled">✈ ${esc(fromLabel)} → ${esc(toLabel)}</span>`;
-      // 展示 filed route（航路点+航路编码）及其他飞行计划详情
-      if (data.route) {
-        const metaParts = [];
-        if (data.routeAltitude) metaParts.push(`FL${data.routeAltitude}`);
-        if (data.distance)      metaParts.push(`${data.distance} nm`);
-        html += `<div class="route-detail"><span class="route-airway">${esc(data.route)}</span>`
-             + (metaParts.length ? ` <span class="route-meta-info">(${esc(metaParts.join(' · '))})</span>` : '')
-             + `</div>`;
-      }
-      const zone = btn.closest('.route-q-wrap') || btn.closest('td');
-      if (zone) {
-        zone.innerHTML = html;
-      } else {
-        btn.textContent = `${fromLabel} → ${toLabel}`;
-        btn.disabled = false;
-      }
-    } else {
-      btn.textContent = '未查到，重试';
-      btn.disabled = false;
-      btn.classList.add('err');
-    }
-  } catch (e) {
-    btn.textContent = '查询失败，重试';
-    btn.disabled = false;
-    btn.classList.add('err');
-  }
-}
-
-// 事件委托：整页监听按钮点击（表格行与当前航线都可能出现）
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.route-q-btn');
-  if (btn) queryRouteOnClick(btn);
-});
+// ===== 航路地图弹层（点击航段/按钮后由 route-map.js 打开）=====
+// 点击委托逻辑见 public/route-map.js（window.openRouteCard）
 
 // 初始化历史记录 + URL 参数自动查询
 renderHistory();

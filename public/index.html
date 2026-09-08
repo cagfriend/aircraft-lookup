@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>航空器详情查询 · Aircraft Lookup</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -120,6 +121,21 @@
     </div>
   </footer>
 
+  <!-- 航路地图弹层（点击航段后展开） -->
+  <div id="routeModal" class="route-modal hidden">
+    <div class="route-card">
+      <div class="route-card-head">
+        <div class="route-card-title" id="routeCardTitle">航路</div>
+        <button class="route-card-close" id="routeCardClose" aria-label="关闭">×</button>
+      </div>
+      <div class="route-card-sub" id="routeCardSub"></div>
+      <div id="routeMap" class="route-map"></div>
+      <div class="route-card-body" id="routeCardBody"></div>
+    </div>
+  </div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/app.js"></script>
+  <script src="/route-map.js"></script>
 </body>
 </html>
