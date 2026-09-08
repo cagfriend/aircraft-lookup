@@ -16,6 +16,10 @@
   let map = null;
   let routeLayer = null;
   let fetchSeq = 0; // 防止过期请求覆盖新请求
+  let fixesLoaded = false; // 航路点数据库是否已懒加载
+  const onlineFixCache = {}; // OpenNav 在线解析出的坐标缓存
+  let lastRouteData = null;   // 供在线解析后重绘
+  let lastUnknownFixes = [];  // 当前未解析的航路点名称
 
   // 地图瓦片源：OpenStreetMap（高德瓦片在部分网络加载失败，已移除）
   const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -38,6 +42,33 @@
 
   function show(el) { el.classList.remove('hidden'); }
   function hide(el) { el.classList.add('hidden'); }
+
+  // ---- 航路点数据库：懒加载 /data/fixes.data.js（约3MB，仅首次打开地图时加载一次）----
+  function ensureFixesLoaded() {
+    if (window.AIRCRAFT_FIXES || fixesLoaded) return Promise.resolve();
+    fixesLoaded = true;
+    return new Promise(function (resolve) {
+      var s = document.createElement('script');
+      s.src = '/data/fixes.data.js';
+      s.onload = resolve;
+      s.onerror = resolve; // 加载失败也不阻塞，走示意兜底
+      document.head.appendChild(s);
+    });
+  }
+
+  // 按名称查航路点坐标；同名多点时选离航线中点最近的（如 ABI 有美国/索马里两个）
+  function resolveFixCoord(name, fLL, tLL) {
+    const db = (window.AIRCRAFT_FIXES || {})[name] || onlineFixCache[name];
+    if (!db) return null;
+    const pts = Array.isArray(db[0]) ? db : [db]; // 单点或数组
+    const mid = [(fLL[0] + tLL[0]) / 2, (fLL[1] + tLL[1]) / 2];
+    let best = null, bestD = Infinity;
+    pts.forEach(function (p) {
+      const d = (p[0] - mid[0]) * (p[0] - mid[0]) + (p[1] - mid[1]) * (p[1] - mid[1]);
+      if (d < bestD) { bestD = d; best = p; }
+    });
+    return best;
+  }
 
   // ---- 经纬度解析 ----
   // 支持：4700N/05000W、4700N05000W、N4700/05000W、N4700W05000
@@ -165,34 +196,49 @@
     const boundPts = [fLL, tLL];
 
     // 2) 真实坐标航路点 → 精确折线
+    // 按 filed route 顺序收集真实坐标点（坐标点 + 数据库可解析出的名称航路点）
+    const orderedPts = [];
+    const unknownFixes = [];
+    classified.forEach((c) => {
+      if (c.kind === 'coord') {
+        orderedPts.push([c.lat, c.lon, c.label]);
+      } else if (c.kind === 'fix') {
+        const ll = resolveFixCoord(c.label, fLL, tLL);
+        if (ll) orderedPts.push([ll[0], ll[1], c.label]);
+        else unknownFixes.push(c);
+      }
+    });
+
+    // 3) 有真实坐标点 → 实线路径；否则大圆虚线
     let hasReal = false;
-    if (coordPts.length) {
-      const chain = [fLL].concat(coordPts.map((c) => [c.lat, c.lon])).concat([tLL]);
+    if (orderedPts.length) {
+      const chain = [fLL].concat(orderedPts.map((p) => [p[0], p[1]])).concat([tLL]);
       const line = [];
       for (let i = 0; i < chain.length - 1; i++) {
         line.push.apply(line, gcArc(chain[i], chain[i + 1], 24));
       }
       L.polyline(line, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
       hasReal = true;
-      coordPts.forEach((c) => {
-        boundPts.push([c.lat, c.lon]);
-        const mk = L.circleMarker([c.lat, c.lon], {
+      orderedPts.forEach((p) => {
+        boundPts.push([p[0], p[1]]);
+        const mk = L.circleMarker([p[0], p[1]], {
           radius: 6, color: '#0b7285', weight: 1.5, fillColor: '#22b8cf', fillOpacity: .9,
         });
-        mk.bindTooltip('航路点 ' + c.label, { direction: 'top' });
+        mk.bindTooltip('航路点 ' + p[2], { direction: 'top' });
         mk.addTo(routeLayer);
       });
     } else {
-      // 3) 无真实坐标 → 大圆弧虚线示意
       const arc = gcArc(fLL, tLL, 48);
       L.polyline(arc, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
     }
 
-    // 4) 名称航路点（无坐标）→ 沿大圆按序示意分布
-    if (fixes.length) {
-      const n = fixes.length;
+    // 4) 仍无法解析的名称航路点 → 沿大圆按序示意分布
+    lastRouteData = data;
+    lastUnknownFixes = unknownFixes.map((fx) => fx.label);
+    if (unknownFixes.length) {
+      const n = unknownFixes.length;
       const arc = gcArc(fLL, tLL, n + 1);
-      fixes.forEach((fx, i) => {
+      unknownFixes.forEach((fx, i) => {
         const ll = arc[i + 1] || fLL; // 均匀取点，跳过两端
         boundPts.push(ll);
         const mk = L.circleMarker(ll, {
@@ -220,8 +266,8 @@
         const tip = c.kind === 'coord' ? (' title="' + esc(c.label) + '  =  ' + esc(c.lat.toFixed(2)) + ', ' + esc(c.lon.toFixed(2)) + '"') : '';
         return '<span class="' + cls + '"' + tip + '>' + esc(c.label) + '</span>';
       }).join('') + '</div>';
-      if (hasReal) html += '<div class="tip">🔵 蓝色点为坐标航路点（真实位置）；🟡 空心点为名称航路点按序示意。</div>';
-      else if (fixes.length) html += '<div class="tip">🟡 名称航路点无公开坐标，按航路顺序沿大圆航线示意分布。</div>';
+      if (hasReal) html += '<div class="tip">🔵 蓝色点为航路点（真实位置）；🟡 空心点为未收录航路点的示意。</div>';
+      else if (unknownFixes.length) html += '<div class="tip">🟡 航路点暂无坐标数据，按航路顺序沿大圆航线示意分布。</div>';
     } else {
       html += '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
     }
@@ -232,6 +278,25 @@
     if (data.fuelBurn && data.fuelBurn.pounds != null) meta.push('预估燃油 ' + data.fuelBurn.pounds.toLocaleString() + ' lb');
     if (meta.length) html += '<div class="route-metric-row">' + meta.map(esc).join('<span style="opacity:.4">|</span>') + '</div>';
     bodyEl.innerHTML = html;
+  }
+
+  // ---- 在线补充解析未收录航路点（OpenNav，需后端 OPENNAV_TOKEN）----
+  async function resolveUnknownOnline() {
+    const unknowns = lastUnknownFixes;
+    if (!unknowns || !unknowns.length || !lastRouteData) return;
+    let changed = false;
+    for (const name of unknowns) {
+      if (onlineFixCache[name]) continue;
+      try {
+        const res = await fetch('/api/fix?ident=' + encodeURIComponent(name));
+        const d = await res.json();
+        if (res.ok && d.success && d.lat != null && d.lon != null) {
+          onlineFixCache[name] = [+d.lat, +d.lon];
+          changed = true;
+        }
+      } catch (e) { /* 忽略单个失败 */ }
+    }
+    if (changed && lastRouteData) drawRoute(lastRouteData); // 有新增坐标则重绘
   }
 
   // ---- 对外：点击航段后打开 ----
@@ -259,8 +324,11 @@
         esc((t.code || '') + ' ' + (t.name || '')) +
         '　<span style="opacity:.5">filed route · 地图 © OpenStreetMap</span>';
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';
+      await ensureFixesLoaded();
       drawRoute(data);
       requestAnimationFrame(() => map.invalidateSize());
+      // 本地数据库未收录的点 → 尝试 OpenNav 在线解析（需后端配置 OPENNAV_TOKEN）
+      resolveUnknownOnline();
     } catch (e) {
       if (mySeq !== fetchSeq) return;
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';

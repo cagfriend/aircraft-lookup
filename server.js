@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lookupAircraft } from './src/aggregate.js';
 import { queryFlightRoute } from './src/flightroute.js';
+import { queryFixOnline } from './src/fixlookup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -54,6 +55,16 @@ app.get('/api/route', async (req, res) => {
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
+});
+
+// 在线补充航路点坐标（OpenNav，需 OPENNAV_TOKEN）
+app.get('/api/fix', async (req, res) => {
+  const ident = String(req.query.ident || '').trim().toUpperCase();
+  if (!ident) return res.status(400).json({ success: false, error: '缺少 ident' });
+  const fix = await queryFixOnline(ident).catch(() => null);
+  if (!fix) return res.status(404).json({ success: false, error: '未查到该航路点' });
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.json({ success: true, ident, lat: fix.lat, lon: fix.lon });
 });
 
 // 图片代理（规避外部 CDN 的防盗链 / 跨域限制）

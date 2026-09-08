@@ -4,6 +4,7 @@
 
 import { lookupAircraft } from './aggregate.js';
 import { queryFlightRoute } from './flightroute.js';
+import { queryFixOnline } from './fixlookup.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -89,6 +90,15 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
+    }
+
+    // /api/fix（在线补充航路点坐标，需 OPENNAV_TOKEN）
+    if (path === '/api/fix') {
+      const ident = String(url.searchParams.get('ident') || '').trim().toUpperCase();
+      if (!ident) return json({ success: false, error: '缺少 ident' }, 400);
+      const fix = await queryFixOnline(ident).catch(() => null);
+      if (!fix) return json({ success: false, error: '未查到该航路点' }, 404);
+      return json({ success: true, ident, lat: fix.lat, lon: fix.lon });
     }
 
     // /api/img（图片代理）
