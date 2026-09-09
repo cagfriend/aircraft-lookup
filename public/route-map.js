@@ -21,9 +21,25 @@
   let lastRouteData = null;   // 供在线解析后重绘
   let lastUnknownFixes = [];  // 当前未解析的航路点名称
 
-  // 地图瓦片源：OpenStreetMap（高德瓦片在部分网络加载失败，已移除）
-  const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const TILE_OPTS = { subdomains: ['a', 'b', 'c'], maxZoom: 19 };
+  // 地图瓦片源（按序降级）：高德(国内/手机通常可加载) → OSM → Carto(全球兜底)
+  const TILE_SETS = [
+    {
+      url: 'https://wprd{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+      opts: { subdomains: ['1', '2', '3', '4'], maxZoom: 18 },
+      label: '高德',
+    },
+    {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      opts: { subdomains: ['a', 'b', 'c'], maxZoom: 19 },
+      label: 'OpenStreetMap',
+    },
+    {
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+      opts: { subdomains: ['a', 'b', 'c', 'd'], maxZoom: 19 },
+      label: 'CARTO',
+    },
+  ];
+  let tileSourceIdx = 0;
 
   // 注入地图标记样式（避免动 style.css）
   const styleEl = document.createElement('style');
@@ -143,12 +159,33 @@
   }
 
   // ---- Leaflet 初始化（弹层显示后再建，否则容器尺寸为 0）----
+  let attributionCtl = null;
+
+  // 添加当前瓦片源；加载失败(连续错误或超时)时自动降级到下一个源，并只保留当前源的版权
+  function addTileSource() {
+    const set = TILE_SETS[tileSourceIdx];
+    const layer = L.tileLayer(set.url, set.opts).addTo(map);
+    if (attributionCtl) map.removeControl(attributionCtl);
+    attributionCtl = L.control.attribution({ prefix: false }).addAttribution('地图 © ' + set.label).addTo(map);
+    let errors = 0;
+    const fail = () => {
+      if (tileSourceIdx >= TILE_SETS.length - 1) return;
+      tileSourceIdx += 1;
+      map.removeLayer(layer);
+      addTileSource();
+    };
+    layer.on('tileerror', () => { errors += 1; if (errors >= 3) fail(); });
+    // 若 6 秒内没有任何砖块加载成功，也判定当前源不可用，切下一个
+    const timer = setTimeout(() => { if (errors === 0) fail(); }, 6000);
+    layer.on('tileload', () => clearTimeout(timer));
+    return layer;
+  }
+
   function initMap() {
     if (map) return map;
     map = L.map('routeMap', { zoomControl: false, attributionControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer(TILE_URL, TILE_OPTS).addTo(map);
-    L.control.attribution({ prefix: false }).addAttribution('地图 © OpenStreetMap').addTo(map);
+    addTileSource();
     // 初始给一个世界视野，让地图立刻有内容，避免等待接口返回期间白屏
     map.setView([20, 0], 2);
     return map;
@@ -201,17 +238,7 @@
     const coordPts = classified.filter((x) => x.kind === 'coord'); // 真实坐标航路点
     const fixes = classified.filter((x) => x.kind === 'fix');       // 名称航路点
 
-    // 1) 起降机场
-    const mkA = airportMarker(fLL, 'ap-origin', (f.code || '起').slice(0, 3));
-    const mkB = airportMarker(tLL, 'ap-dest', (t.code || '达').slice(0, 3));
-    mkA.bindTooltip('起 ' + (f.code || '') + ' ' + (f.name || ''), { direction: 'top' });
-    mkB.bindTooltip('达 ' + (t.code || '') + ' ' + (t.name || ''), { direction: 'top' });
-    mkA.addTo(routeLayer); mkB.addTo(routeLayer);
-
-    const boundPts = [fLL, tLL];
-
-    // 2) 真实坐标航路点 → 精确折线
-    // 按 filed route 顺序收集真实坐标点（坐标点 + 数据库可解析出的名称航路点）
+    // 1) 按 filed route 顺序收集真实坐标点（坐标点 + 数据库可解析出的名称航路点）
     const orderedPts = [];
     const unknownFixes = [];
     classified.forEach((c) => {
@@ -224,21 +251,38 @@
       }
     });
 
-    // 3) 有真实坐标点 → 实线路径；否则大圆虚线
+    // 2) 统一经度框架：机场 + 航路点放在同一连续经度（跨日界线不跳变、终点不丢）
+    const chainRaw = [fLL];
+    orderedPts.forEach((p) => chainRaw.push([p[0], p[1]]));
+    chainRaw.push(tLL);
+    const chainFrame = unwrapLng(chainRaw);
+    const fFrame = chainFrame[0];
+    const tFrame = chainFrame[chainFrame.length - 1];
+
+    // 3) 起降机场（用与航线一致的经度框架坐标）
+    const mkA = airportMarker(fFrame, 'ap-origin', (f.code || '起').slice(0, 3));
+    const mkB = airportMarker(tFrame, 'ap-dest', (t.code || '达').slice(0, 3));
+    mkA.bindTooltip('起 ' + (f.code || '') + ' ' + (f.name || ''), { direction: 'top' });
+    mkB.bindTooltip('达 ' + (t.code || '') + ' ' + (t.name || ''), { direction: 'top' });
+    mkA.addTo(routeLayer); mkB.addTo(routeLayer);
+
+    const boundPts = [fFrame, tFrame];
+
+    // 4) 有真实坐标点 → 实线路径；否则大圆虚线（大圆插值后统一经度展开）
     let hasReal = false;
     let viewPts = null; // 经度展开后的路径点，用于最后 fitBounds
     if (orderedPts.length) {
-      const chain = [fLL].concat(orderedPts.map((p) => [p[0], p[1]])).concat([tLL]);
       const line = [];
-      for (let i = 0; i < chain.length - 1; i++) {
-        line.push.apply(line, gcArc(chain[i], chain[i + 1], 24));
+      for (let i = 0; i < chainRaw.length - 1; i++) {
+        line.push.apply(line, gcArc(chainRaw[i], chainRaw[i + 1], 24));
       }
       viewPts = unwrapLng(line);
       L.polyline(viewPts, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
       hasReal = true;
-      orderedPts.forEach((p) => {
-        boundPts.push([p[0], p[1]]);
-        const mk = L.circleMarker([p[0], p[1]], {
+      orderedPts.forEach((p, idx) => {
+        const c = chainFrame[idx + 1]; // 同一经度框架，保证与路径对齐
+        boundPts.push([c[0], c[1]]);
+        const mk = L.circleMarker([c[0], c[1]], {
           radius: 6, color: '#0b7285', weight: 1.5, fillColor: '#22b8cf', fillOpacity: .9,
         });
         mk.bindTooltip('航路点 ' + p[2], { direction: 'top' });
@@ -249,14 +293,14 @@
       L.polyline(viewPts, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
     }
 
-    // 4) 仍无法解析的名称航路点 → 沿大圆按序示意分布
+    // 5) 仍无法解析的名称航路点 → 沿大圆按序示意（同样用展开后的经度框架）
     lastRouteData = data;
     lastUnknownFixes = unknownFixes.map((fx) => fx.label);
     if (unknownFixes.length) {
       const n = unknownFixes.length;
-      const arc = gcArc(fLL, tLL, n + 1);
+      const arcFrame = unwrapLng(gcArc(fLL, tLL, n + 1));
       unknownFixes.forEach((fx, i) => {
-        const ll = arc[i + 1] || fLL; // 均匀取点，跳过两端
+        const ll = arcFrame[i + 1] || fFrame; // 均匀取点，跳过两端
         boundPts.push(ll);
         const mk = L.circleMarker(ll, {
           radius: 5, color: '#e8a33d', weight: 1.5,
