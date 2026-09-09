@@ -169,6 +169,21 @@
     return L.marker(ll, { icon });
   }
 
+  // 经度展开：跨日界线时把相邻点经度差约束在 ±180 内，
+  // 避免 Leaflet 把跨太平洋航线的线段画成横穿整张地图的直线
+  function unwrapLng(pts) {
+    const out = pts.map((p) => [p[0], p[1]]);
+    let prev = out.length ? out[0][1] : 0;
+    for (let i = 1; i < out.length; i++) {
+      let lon = out[i][1];
+      while (lon - prev > 180) lon -= 360;
+      while (lon - prev < -180) lon += 360;
+      out[i][1] = lon;
+      prev = lon;
+    }
+    return out;
+  }
+
   // ---- 主绘制 ----
   function drawRoute(data) {
     clearRoute();
@@ -211,13 +226,15 @@
 
     // 3) 有真实坐标点 → 实线路径；否则大圆虚线
     let hasReal = false;
+    let viewPts = null; // 经度展开后的路径点，用于最后 fitBounds
     if (orderedPts.length) {
       const chain = [fLL].concat(orderedPts.map((p) => [p[0], p[1]])).concat([tLL]);
       const line = [];
       for (let i = 0; i < chain.length - 1; i++) {
         line.push.apply(line, gcArc(chain[i], chain[i + 1], 24));
       }
-      L.polyline(line, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
+      viewPts = unwrapLng(line);
+      L.polyline(viewPts, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
       hasReal = true;
       orderedPts.forEach((p) => {
         boundPts.push([p[0], p[1]]);
@@ -228,8 +245,8 @@
         mk.addTo(routeLayer);
       });
     } else {
-      const arc = gcArc(fLL, tLL, 48);
-      L.polyline(arc, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
+      viewPts = unwrapLng(gcArc(fLL, tLL, 48));
+      L.polyline(viewPts, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
     }
 
     // 4) 仍无法解析的名称航路点 → 沿大圆按序示意分布
@@ -250,9 +267,11 @@
       });
     }
 
-    // 视野
-    if (boundPts.length >= 2) {
-      map.fitBounds(L.latLngBounds(boundPts), { padding: [50, 50], maxZoom: 9 });
+    // 视野：优先用经度展开后的路径点（跨太平洋/日界线航线才能正确居中）
+    if (viewPts && viewPts.length >= 2) {
+      map.fitBounds(L.latLngBounds(viewPts), { padding: [50, 50], maxZoom: 9 });
+    } else if (boundPts.length >= 2) {
+      map.fitBounds(L.latLngBounds(boundPts), { padding: [50, 50], maxZoom: 5 });
     } else {
       map.setView(fLL, 5);
     }
