@@ -6,7 +6,6 @@ import { lookupAircraft } from './aggregate.js';
 import { queryFlightRoute } from './flightroute.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
-import { fetchURL, IS_NODE } from './fetch.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -69,24 +68,6 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
-    }
-
-    // 临时诊断端点（排查完删除）
-    if (path === '/api/_diag') {
-      const out = { isNode: IS_NODE, ver: 'diag-1' };
-      try {
-        const r = await fetchURL('https://airport-data.com/aircraft/B-5976', { timeout: 8000 });
-        out.airportdata = { status: r.status, len: r.body ? r.body.length : 0 };
-      } catch (e) {
-        out.airportdata = { error: String((e && e.message) || e), stack: String((e && e.stack) || '').slice(0, 400) };
-      }
-      try {
-        const r2 = await fetchURL('https://opensky-network.org/api/states/all?icao24=780c96', { timeout: 8000 });
-        out.opensky = { status: r2.status, len: r2.body ? r2.body.length : 0 };
-      } catch (e) {
-        out.opensky = { error: String((e && e.message) || e), stack: String((e && e.stack) || '').slice(0, 400) };
-      }
-      return json(out);
     }
 
     // /api/route

@@ -120,12 +120,13 @@ async function envFetch(url, { headers, timeout, followRedirect, ua, method, bod
     };
     if (body) init.body = body;
     const res = await fetch(url, init);
-    const body = await res.text();
+    // 注意：变量名不能叫 body，否则会遮蔽上面的参数 body（TDZ 报错）
+    const text = await res.text();
     const norm = {};
     res.headers.forEach((v, k) => {
       norm[k] = v;
     });
-    return { status: res.status, headers: norm, body };
+    return { status: res.status, headers: norm, body: text };
   } finally {
     clearTimeout(timer);
   }
