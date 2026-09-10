@@ -6,6 +6,7 @@ import { lookupAircraft } from './aggregate.js';
 import { queryFlightRoute } from './flightroute.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
+import { fetchURL } from './fetch.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -68,6 +69,27 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
+    }
+
+    // 临时诊断（用完删除）
+    if (path === '/api/_diag2') {
+      const tests = [
+        ['root-8s', 'https://opensky-network.org/', 8000],
+        ['states-8s', 'https://opensky-network.org/api/states/all?icao24=780c96', 8000],
+        ['states-25s', 'https://opensky-network.org/api/states/all?icao24=780c96', 25000],
+        ['auth-8s', 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', 8000],
+      ];
+      const out = {};
+      for (const [name, u, to] of tests) {
+        const t0 = Date.now();
+        try {
+          const r = await fetchURL(u, { timeout: to });
+          out[name] = { status: r.status, ms: Date.now() - t0, len: r.body ? r.body.length : 0 };
+        } catch (e) {
+          out[name] = { error: String((e && e.message) || e), ms: Date.now() - t0 };
+        }
+      }
+      return json(out);
     }
 
     // /api/route
