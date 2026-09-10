@@ -73,18 +73,60 @@
     });
   }
 
-  // 按名称查航路点坐标；同名多点时选离航线中点最近的（如 ABI 有美国/索马里两个）
-  function resolveFixCoord(name, fLL, tLL) {
+  // 取某 ident 的全部候选坐标（数据库 + 在线补充缓存）
+  function candidatesFor(name) {
     const db = (window.AIRCRAFT_FIXES || {})[name] || onlineFixCache[name];
-    if (!db) return null;
-    const pts = Array.isArray(db[0]) ? db : [db]; // 单点或数组
-    const mid = [(fLL[0] + tLL[0]) / 2, (fLL[1] + tLL[1]) / 2];
-    let best = null, bestD = Infinity;
-    pts.forEach(function (p) {
-      const d = (p[0] - mid[0]) * (p[0] - mid[0]) + (p[1] - mid[1]) * (p[1] - mid[1]);
-      if (d < bestD) { bestD = d; best = p; }
+    if (!db) return [];
+    return Array.isArray(db[0]) ? db : [db]; // 单点或数组（同名多坐标）
+  }
+
+  // 两点大圆距离（公里）
+  function gcDistanceKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b[0] - a[0]) * rad;
+    const dLon = (b[1] - a[1]) * rad;
+    const s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  /**
+   * 沿航线顺序解析航路点（解决"同名航路点选错位置"）：
+   *  - 用「上一个已确定的点」作为参考就近选择候选坐标（等价于用前后点判断）
+   *  - 偏离过大的候选直接丢弃（宁可不上图，也不要画到地球另一端）
+   * @returns {Array<{label:string, ll:number[]|null}>} 与输入顺序一致
+   */
+  function resolveSequential(classified, fLL, tLL) {
+    const totalKm = gcDistanceKm(fLL, tLL);
+    const spatialCount = classified.filter((c) => c.kind === 'coord' || c.kind === 'fix').length;
+    const expectedLeg = totalKm / Math.max(1, spatialCount + 1);
+    // 单段允许的最大距离：期望段长的 3 倍，且限制在 1200~4000km
+    const maxLeg = Math.max(1200, Math.min(expectedLeg * 3, 4000));
+
+    const out = [];
+    let prev = fLL;
+    classified.forEach((c) => {
+      if (c.kind === 'coord') {
+        out.push({ label: c.label, ll: [c.lat, c.lon] });
+        prev = [c.lat, c.lon];
+        return;
+      }
+      if (c.kind !== 'fix') return; // 航路/程序/机场等不作为空间点
+      const cands = candidatesFor(c.label);
+      if (!cands.length) { out.push({ label: c.label, ll: null }); return; }
+      let best = null, bestD = Infinity;
+      cands.forEach((p) => {
+        const d = gcDistanceKm(prev, p);
+        if (d < bestD) { bestD = d; best = p; }
+      });
+      if (best && bestD <= maxLeg) {
+        out.push({ label: c.label, ll: best });
+        prev = best;
+      } else {
+        out.push({ label: c.label, ll: null }); // 明显偏离 → 丢弃
+      }
     });
-    return best;
+    return out;
   }
 
   // ---- 经纬度解析 ----
@@ -116,7 +158,8 @@
 
   // ---- filed route token 分类 ----
   function classifyToken(tok, icaoFrom, icaoTo) {
-    const u = (tok || '').toUpperCase();
+    // 去掉可能的 +/- 前缀（如 FlightAware 的 +GAYEL / +SYR）
+    const u = (tok || '').toUpperCase().replace(/^[+-]+/, '');
     const c = parseCoordToken(u);
     if (c) return { kind: 'coord', label: u, lat: c[0], lon: c[1] };
     // 航路编码 / NAT 航迹：J17、A593、N175G
@@ -269,16 +312,16 @@
     const coordPts = classified.filter((x) => x.kind === 'coord'); // 真实坐标航路点
     const fixes = classified.filter((x) => x.kind === 'fix');       // 名称航路点
 
-    // 1) 按 filed route 顺序收集真实坐标点（坐标点 + 数据库可解析出的名称航路点）
+    // 1) 按 filed route 顺序解析真实坐标点（顺序就近选择 + 偏离过滤）
     const orderedPts = [];
-    const unknownFixes = [];
-    classified.forEach((c) => {
-      if (c.kind === 'coord') {
-        orderedPts.push([c.lat, c.lon, c.label]);
-      } else if (c.kind === 'fix') {
-        const ll = resolveFixCoord(c.label, fLL, tLL);
-        if (ll) orderedPts.push([ll[0], ll[1], c.label]);
-        else unknownFixes.push(c);
+    const unknownFixes = [];  // 数据库里没有的点
+    const droppedFixes = [];  // 有同名点但位置明显偏离、已丢弃的点
+    resolveSequential(classified, fLL, tLL).forEach((r) => {
+      if (r.ll) {
+        orderedPts.push([r.ll[0], r.ll[1], r.label]);
+      } else if (r.label) {
+        if (candidatesFor(r.label).length) droppedFixes.push(r.label);
+        else unknownFixes.push({ label: r.label });
       }
     });
 
@@ -377,6 +420,11 @@
       }).join('') + '</div>';
       if (hasReal) html += '<div class="tip">🔵 蓝色点为航路点（真实位置）；🟡 空心点为未收录航路点的示意。</div>';
       else if (unknownFixes.length) html += '<div class="tip">🟡 航路点暂无坐标数据，按航路顺序沿大圆航线示意分布。</div>';
+      if (droppedFixes.length) {
+        html += '<div class="tip">⚠️ 已过滤 ' + droppedFixes.length + ' 个同名但位置明显偏离的航路点：'
+          + esc(droppedFixes.slice(0, 8).join('、'))
+          + (droppedFixes.length > 8 ? ' 等' : '') + '</div>';
+      }
     } else {
       html += '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
     }
