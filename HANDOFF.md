@@ -39,6 +39,8 @@
   - `queryOpenSkyTrack(icao24)` — **真实飞行轨迹**（**匿名即可用**！返回抽稀后的点，默认≤240 点）
   - `queryOpenSkyFlights(icao24, {hours})` — **历史航班**（**需凭据**，默认 24h 窗口 = 4 credits）
 - **配额**：匿名 400/天；注册 4000/天；**states/tracks/flights 三者配额独立**。`/states` 按包围框 1–4 credits；`/tracks`、`/flights` 按跨越日分区 4–30+ credits
+- ⚠️ **重要实测结论（2026-09）**：**OpenSky 从 Cloudflare Worker 访问不通** —— `opensky-network.org` 的 states/tracks/auth 全部超时，25s 时返回 **HTTP 522**（Cloudflare 边缘连不上 OpenSky 源站；OpenSky 自己就在 Cloudflare 后面）。因此线上"实时位置""真实轨迹""历史航班"都拿不到数据，只能降级。**本地 Node 直连正常**（轨迹实测 100+ 点）。已做的缓解：超时 15s→6s（`OPENSKY_TIMEOUT_MS` 可调）+ 失败熔断负缓存 5 分钟。
+  - 若将来要让线上也能用轨迹，需要换一个**对 Cloudflare 出口可达**的 ADS-B 源。实测：`api.adsb.lol` 可达但返回 429（限流）；`opendata.adsb.fi` 403（屏蔽数据中心 IP）；`api.adsbdb.com` 200 可用（但只有机型信息，无轨迹）。
 - **前端**：`/api/route?callsign=X&icao24=Y` 并行取 FlightAware + OpenSky。地图上**绿线 = OpenSky 真实轨迹**，蓝线 = filed route 航路点连线，灰虚线 = 大圆兜底。`app.js` 在 render 时把当前机 ICAO24 放到 `window.__aircraftIcao24`
 
 - `aggregate.js`：编排+机龄计算+缓存(30min)+最近机场+国家。
