@@ -6,7 +6,6 @@ import { lookupAircraft } from './aggregate.js';
 import { queryFlightRoute } from './flightroute.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
-import { fetchURL } from './fetch.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -69,27 +68,6 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
-    }
-
-    // 临时诊断（用完删除）
-    if (path === '/api/_diag2') {
-      const tests = [
-        ['opensky-states', 'https://opensky-network.org/api/states/all?icao24=780c96', 20000],
-        ['adsb.lol', 'https://api.adsb.lol/v2/icao/780c96', 10000],
-        ['adsb.fi', 'https://opendata.adsb.fi/api/v2/icao/780c96', 10000],
-        ['adsbdb', 'https://api.adsbdb.com/v0/aircraft/B-5976', 10000],
-      ];
-      const out = {};
-      for (const [name, u, to] of tests) {
-        const t0 = Date.now();
-        try {
-          const r = await fetchURL(u, { timeout: to });
-          out[name] = { status: r.status, ms: Date.now() - t0, len: r.body ? r.body.length : 0 };
-        } catch (e) {
-          out[name] = { error: String((e && e.message) || e), ms: Date.now() - t0 };
-        }
-      }
-      return json(out);
     }
 
     // /api/route

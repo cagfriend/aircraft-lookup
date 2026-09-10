@@ -38,26 +38,46 @@ export function openskyEnabled() {
   return !!(env('OPENSKY_CLIENT_ID') && env('OPENSKY_CLIENT_SECRET'));
 }
 
+// 请求超时：OpenSky 有时不可达，超时设短一点避免拖慢主流程
+const OS_TIMEOUT = Number(env('OPENSKY_TIMEOUT_MS')) || 6000;
+
+// 熔断：OpenSky 连续不可达（如 Cloudflare 边缘返回 522）时，短时间内不再尝试，
+// 避免每次查询都白等一个超时。
+let osFailUntil = 0;
+function osBlocked() { return Date.now() < osFailUntil; }
+function osMarkFail() { osFailUntil = Date.now() + 5 * 60 * 1000; }
+
 /* ---------------- OAuth2 token（30 分钟过期，提前 2 分钟刷新） ---------------- */
 let tokenCache = { token: '', exp: 0 };
+let tokenFailUntil = 0; // 取 token 失败后的负缓存（5 分钟内不再重试）
 
 async function getToken() {
   if (!openskyEnabled()) return '';
   const now = Date.now();
   if (tokenCache.token && now < tokenCache.exp) return tokenCache.token;
+  if (now < tokenFailUntil) return '';
 
   const body = 'grant_type=client_credentials'
     + '&client_id=' + encodeURIComponent(env('OPENSKY_CLIENT_ID'))
     + '&client_secret=' + encodeURIComponent(env('OPENSKY_CLIENT_SECRET'));
 
-  const res = await fetchURL(TOKEN_URL, {
-    method: 'POST',
-    body: body,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    timeout: 15000,
-    followRedirect: false,
-  });
-  if (res.status >= 400) return '';
+  let res;
+  try {
+    res = await fetchURL(TOKEN_URL, {
+      method: 'POST',
+      body: body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: OS_TIMEOUT,
+      followRedirect: false,
+    });
+  } catch (e) {
+    tokenFailUntil = now + 5 * 60 * 1000; // 网络不可达：负缓存 5 分钟
+    return '';
+  }
+  if (res.status >= 400) {
+    tokenFailUntil = now + 5 * 60 * 1000;
+    return '';
+  }
   const j = parseJSON(res.body);
   if (!j || !j.access_token) return '';
   const ttlMs = (Number(j.expires_in) || 1800) * 1000;
@@ -76,10 +96,18 @@ function authHeaders(token) {
 export async function queryOpenSky(icao24) {
   const hex = (icao24 || '').toLowerCase();
   if (!hex) return { ok: false, source: 'OpenSky', error: '缺少 ICAO24' };
+  if (osBlocked()) return { ok: false, source: 'OpenSky', error: 'OpenSky 暂时不可达（熔断中）' };
   const token = await getToken().catch(() => '');
   const url = STATE_URL + '?icao24=' + encodeURIComponent(hex);
-  const res = await fetchURL(url, { timeout: 15000, headers: authHeaders(token) });
+  let res;
+  try {
+    res = await fetchURL(url, { timeout: OS_TIMEOUT, headers: authHeaders(token) });
+  } catch (e) {
+    osMarkFail();
+    return { ok: false, source: 'OpenSky', error: String((e && e.message) || e) };
+  }
   if (res.status >= 400) {
+    if (res.status >= 500) osMarkFail();
     return { ok: false, source: 'OpenSky', http: res.status, error: 'OpenSky 返回 HTTP ' + res.status };
   }
   const json = parseJSON(res.body);
@@ -119,11 +147,19 @@ export async function queryOpenSky(icao24) {
 export async function queryOpenSkyTrack(icao24, opts = {}) {
   const hex = (icao24 || '').toLowerCase();
   if (!hex) return { ok: false, source: 'OpenSky', error: '缺少 ICAO24' };
+  if (osBlocked()) return { ok: false, source: 'OpenSky', error: 'OpenSky 暂时不可达（熔断中）' };
   const maxPoints = Math.max(20, Math.min(Number(opts.maxPoints) || 240, 1000));
   const token = await getToken().catch(() => '');
   const url = TRACK_URL + '?icao24=' + encodeURIComponent(hex) + '&time=0';
-  const res = await fetchURL(url, { timeout: 15000, headers: authHeaders(token) });
+  let res;
+  try {
+    res = await fetchURL(url, { timeout: OS_TIMEOUT, headers: authHeaders(token) });
+  } catch (e) {
+    osMarkFail();
+    return { ok: false, source: 'OpenSky', error: String((e && e.message) || e) };
+  }
   if (res.status >= 400) {
+    if (res.status >= 500) osMarkFail();
     return { ok: false, source: 'OpenSky', http: res.status, error: 'OpenSky tracks 返回 HTTP ' + res.status };
   }
   const j = parseJSON(res.body);
@@ -168,12 +204,20 @@ export async function queryOpenSkyFlights(icao24, opts = {}) {
   if (!token) {
     return { ok: false, source: 'OpenSky', error: '未配置 OpenSky 凭据（历史航班需认证）' };
   }
+  if (osBlocked()) return { ok: false, source: 'OpenSky', error: 'OpenSky 暂时不可达（熔断中）' };
   const hours = Math.min(Math.max(Number(opts.hours) || 24, 1), 48);
   const end = Math.floor(Date.now() / 1000);
   const begin = end - hours * 3600;
   const url = FLIGHTS_URL + '?icao24=' + encodeURIComponent(hex) + '&begin=' + begin + '&end=' + end;
-  const res = await fetchURL(url, { timeout: 15000, headers: authHeaders(token) });
+  let res;
+  try {
+    res = await fetchURL(url, { timeout: OS_TIMEOUT, headers: authHeaders(token) });
+  } catch (e) {
+    osMarkFail();
+    return { ok: false, source: 'OpenSky', error: String((e && e.message) || e) };
+  }
   if (res.status >= 400) {
+    if (res.status >= 500) osMarkFail();
     return { ok: false, source: 'OpenSky', http: res.status, error: 'OpenSky flights 返回 HTTP ' + res.status };
   }
   const arr = parseJSON(res.body);
