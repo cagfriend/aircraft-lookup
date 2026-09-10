@@ -41,10 +41,11 @@ app.get('/api/route', async (req, res) => {
   if (!cs) return res.status(400).json({ success: false, error: '缺少呼号' });
   try {
     // 并行：FlightAware 航路 + OpenSky 真实轨迹 + OpenSky 历史航班
+    let trackErr = null, osFlightsErr = null;
     const [route, track, osFlights] = await Promise.all([
       queryFlightRoute(cs).catch(() => null),
-      icao24 ? queryOpenSkyTrack(icao24).catch(() => null) : Promise.resolve(null),
-      icao24 ? queryOpenSkyFlights(icao24).catch(() => null) : Promise.resolve(null),
+      icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
+      icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
     ]);
     const trackOut = (track && track.ok)
       ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
@@ -69,10 +70,10 @@ app.get('/api/route', async (req, res) => {
       historicalFlights: route ? (route.historicalFlights || []) : [],
       // OpenSky 真实飞行轨迹（匿名亦可用）
       track: trackOut,
-      trackError: (track && !track.ok) ? track.error : null,
+      trackError: trackErr || ((track && !track.ok) ? track.error : null),
       // OpenSky 历史航班（需凭据）
       openskyFlights: (osFlights && osFlights.ok) ? osFlights.flights : null,
-      openskyFlightsError: (osFlights && !osFlights.ok) ? osFlights.error : null,
+      openskyFlightsError: osFlightsErr || ((osFlights && !osFlights.ok) ? osFlights.error : null),
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
