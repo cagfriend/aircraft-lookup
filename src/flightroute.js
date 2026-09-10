@@ -61,6 +61,54 @@ function pickLatestFlight(bootstrap) {
 }
 
 /**
+ * 从 trackpollBootstrap 的 activityLog 中提取全部历史航班。
+ * 返回数组，每项含 from/to/callsign/departureTime/arrivalTime/route/status 等。
+ * 同一呼号在 FlightAware 页面上通常有 6-8 条历史记录。
+ */
+function extractAllFlights(bootstrap) {
+  const results = [];
+  if (!bootstrap?.flights) return results;
+  for (const flightGroup of Object.values(bootstrap.flights)) {
+    const flights = flightGroup?.activityLog?.flights;
+    if (!Array.isArray(flights)) continue;
+    for (const f of flights) {
+      const o = f.origin || {}, d = f.destination || {};
+      const fp = f.flightPlan || {};
+      const icaoFrom = o.icao || '', icaoTo = d.icao || '';
+      if (!icaoFrom && !icaoTo) continue;
+      const aFrom = airportByIcao(icaoFrom) || airportByIata(icaoFrom);
+      const aTo   = airportByIcao(icaoTo)   || airportByIata(icaoTo);
+      const depTime = f.takeoffTimes?.scheduled || f.takeoffTimes?.estimated || f.takeoffTimes?.actual || null;
+      const arrTime = f.landingTimes?.scheduled || f.landingTimes?.estimated || f.landingTimes?.actual || null;
+      results.push({
+        from: {
+          code:  aFrom?.iata || o.iata || icaoFrom,
+          name:  o.friendlyName || aFrom?.name || icaoFrom,
+          icao:  icaoFrom,
+          coord: Array.isArray(o.coord) ? { lon: o.coord[0], lat: o.coord[1] } : null,
+        },
+        to: {
+          code:  aTo?.iata || d.iata || icaoTo,
+          name:  d.friendlyName || aTo?.name || icaoTo,
+          icao:  icaoTo,
+          coord: Array.isArray(d.coord) ? { lon: d.coord[0], lat: d.coord[1] } : null,
+        },
+        callsign:       (f.displayIdent || f.callsign || '').trim(),
+        departureTime:  depTime ? new Date(depTime * 1000).toISOString() : null,
+        arrivalTime:    arrTime ? new Date(arrTime * 1000).toISOString() : null,
+        flightStatus:   f.flightStatus || '',
+        route:          fp.route || '',
+        routeAltitude:  fp.altitude ?? null,
+        routeSpeed:     fp.speed ?? null,
+        fuelBurn:       fp.fuelBurn || null,
+        distance:       fp.directDistance ?? null,
+      });
+    }
+  }
+  return results;
+}
+
+/**
  * 查询某呼号的执飞航线（含 filed route / 航路点序列 / 飞行计划）
  * @param {string} callsign 如 AAR223 / CES586 / DAL284
  * @returns {Promise<object|null>}
@@ -72,6 +120,7 @@ function pickLatestFlight(bootstrap) {
  *   routeSpeed      — 计划速度（knots），可能为 null
  *   fuelBurn        — 预估燃油 { gallons, pounds }，可能为 null
  *   distance        — 直飞距离（nm），可能为 null
+ *   historicalFlights — 历史航班数组（含每条的 from/to/时间/route）
  */
 export async function queryFlightRoute(callsign) {
   const cs = (callsign || '').trim().toUpperCase();
@@ -137,6 +186,8 @@ export async function queryFlightRoute(callsign) {
       routeSpeed:    fp.speed ?? null,      // 如 452（knots）
       fuelBurn:      fp.fuelBurn || null,   // { gallons, pounds }
       distance:      fp.directDistance ?? null, // 直飞距离 (nm)
+      // 从同一页面提取全部历史航班（含 from/to/时间/route，可做兜底补全）
+      historicalFlights: extractAllFlights(bootstrap),
     };
     routeCache.set(cs, { t: Date.now(), data });
     return data;

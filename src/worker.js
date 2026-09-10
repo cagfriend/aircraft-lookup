@@ -86,6 +86,7 @@ export default {
           routeSpeed: route.routeSpeed ?? null,
           fuelBurn: route.fuelBurn || null,
           distance: route.distance ?? null,
+          historicalFlights: route.historicalFlights || [],
         });
       } catch (e) {
         return json({ success: false, error: e.message }, 500);

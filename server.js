@@ -51,6 +51,7 @@ app.get('/api/route', async (req, res) => {
       routeSpeed: route.routeSpeed ?? null,
       fuelBurn: route.fuelBurn || null,
       distance: route.distance ?? null,
+      historicalFlights: route.historicalFlights || [],
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
