@@ -105,9 +105,10 @@ async function envFetch(url, { headers, timeout, followRedirect, ua, method, bod
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await fetch(url, {
+    // 注意：Cloudflare Workers 对 GET 请求带 body 属性会报错，
+    // 因此仅在确有 body 时才附加该字段。
+    const init = {
       method: method || 'GET',
-      body: body || undefined,
       headers: {
         'User-Agent': ua,
         Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
@@ -116,7 +117,9 @@ async function envFetch(url, { headers, timeout, followRedirect, ua, method, bod
       },
       redirect: followRedirect ? 'follow' : 'manual',
       signal: controller.signal,
-    });
+    };
+    if (body) init.body = body;
+    const res = await fetch(url, init);
     const body = await res.text();
     const norm = {};
     res.headers.forEach((v, k) => {
