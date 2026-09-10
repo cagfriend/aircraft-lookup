@@ -21,12 +21,25 @@
 |------|--------|------|
 | airportdata.js | airport-data.com | 机型/机龄/出厂号/发动机/所有者/ICAO24/执飞航线（核心） |
 | planespotters.js | planespotters.net | 照片 |
-| opensky.js | OpenSky Network | ADS-B 实时位置（按 ICAO24） |
+| opensky.js | OpenSky Network | ADS-B **实时位置 + 真实飞行轨迹 + 历史航班**（详见下方 OpenSky 段） |
 | flightroute.js | FlightAware | 按呼号**按需**补全起降机场 + filed route（航路点/高度/速度/燃油） |
 | airports.js (+airports.data.js) | OurAirports | 9057 机场坐标 → 最近机场匹配 |
 | fixlookup.js | OpenNav（可选，需 OPENNAV_TOKEN） | 在线补充 **非美国航路点**（南美/欧洲等）坐标 |
 
 - **航路点数据库**：`public/data/fixes.data.js`（约 3.3MB，client 端懒加载）。由 FAA fixes(67610) + OurAirports navaids(11008) + OpenNav 抓取(51043) 合并去重生成，约 11.5 万个 ident，同名多点保存多个坐标（前端按航线中点就近选择）。前端 route-map.js 用它把 filed route 里的名称航路点转成真实位置；未收录点再走 /api/fix（OpenNav）在线查，仍无则大圆示意兜底。
+
+### OpenSky（OAuth2，可选但推荐）
+
+- **认证**：OAuth2 client credentials。OAuth 现在**只支持这种**（用户名密码 Basic 已废弃）。
+  - 配置：OpenSky 账号 → Account 页 → 创建 API client → 得到 `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`
+  - token 走 `https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token`，**30 分钟过期**；`opensky.js` 内做了内存缓存 + 提前 2 分钟刷新
+  - **本地**：环境变量；**Cloudflare Worker**：设同名环境变量/Secret（`opensky.js` 的 `env()` 兼容 process.env 与 globalThis.env）
+- **三个接口**（`opensky.js` 导出）：
+  - `queryOpenSky(icao24)` — 实时状态（匿名可用，配额 400/天；配置后 4000/天）
+  - `queryOpenSkyTrack(icao24)` — **真实飞行轨迹**（**匿名即可用**！返回抽稀后的点，默认≤240 点）
+  - `queryOpenSkyFlights(icao24, {hours})` — **历史航班**（**需凭据**，默认 24h 窗口 = 4 credits）
+- **配额**：匿名 400/天；注册 4000/天；**states/tracks/flights 三者配额独立**。`/states` 按包围框 1–4 credits；`/tracks`、`/flights` 按跨越日分区 4–30+ credits
+- **前端**：`/api/route?callsign=X&icao24=Y` 并行取 FlightAware + OpenSky。地图上**绿线 = OpenSky 真实轨迹**，蓝线 = filed route 航路点连线，灰虚线 = 大圆兜底。`app.js` 在 render 时把当前机 ICAO24 放到 `window.__aircraftIcao24`
 
 - `aggregate.js`：编排+机龄计算+缓存(30min)+最近机场+国家。
 - `fetch.js`：HTTP 客户端，**双环境**（Node 用 https+IPv4；Cloudflare 用全局 fetch）。
@@ -50,6 +63,7 @@
 
 ## 待办 / 开放问题
 
+- **待配置**：`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`（不配也能跑：实时+轨迹匿名可用，仅"历史航班"不可用）
 - 无重大未完成项。可考虑：主题"到点自动切换（无需刷新）"功能（当前刷新才生效）。
 - README 已含功能、API、目录、部署、局限说明。
 

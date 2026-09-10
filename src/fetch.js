@@ -1,4 +1,4 @@
-// src/fetch.js — 可靠的 HTTP GET(强制 IPv4、跟随重定向、超时、自定义 UA)
+// src/fetch.js — 可靠的 HTTP 客户端(GET/POST，强制 IPv4、跟随重定向、超时、自定义 UA)
 // 双环境兼容：Node.js 本地用 node:https；Cloudflare Pages/Workers 用全局 fetch
 
 const DEFAULT_UA =
@@ -17,6 +17,8 @@ export const IS_NODE =
  * @param {number} opts.redirects 允许的最大重定向次数
  * @param {boolean} opts.followRedirect 是否跟随 30x 重定向
  * @param {string} opts.ua User-Agent
+ * @param {string} opts.method HTTP 方法（默认 GET）
+ * @param {string} opts.body 请求体（POST 时使用）
  */
 export async function fetchURL(url, opts = {}) {
   const {
@@ -25,16 +27,18 @@ export async function fetchURL(url, opts = {}) {
     redirects = 6,
     followRedirect = true,
     ua = DEFAULT_UA,
+    method = 'GET',
+    body = null,
   } = opts;
 
   if (IS_NODE) {
-    return nodeFetch(url, { headers, timeout, redirects, followRedirect, ua });
+    return nodeFetch(url, { headers, timeout, redirects, followRedirect, ua, method, body });
   }
-  return envFetch(url, { headers, timeout, followRedirect, ua });
+  return envFetch(url, { headers, timeout, followRedirect, ua, method, body });
 }
 
 /* ---------------- Node 实现（强制 IPv4） ---------------- */
-async function nodeFetch(url, { headers, timeout, redirects, followRedirect, ua }) {
+async function nodeFetch(url, { headers, timeout, redirects, followRedirect, ua, method, body }) {
   // 延迟动态加载，避免在 Cloudflare 环境解析 node 模块
   const httpMod = await import('node:http');
   const httpsMod = await import('node:https');
@@ -53,16 +57,17 @@ async function nodeFetch(url, { headers, timeout, redirects, followRedirect, ua 
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       ...headers,
     };
+    if (body) reqHeaders['Content-Length'] = Buffer.byteLength(body);
     const res = await nodeReq(isHttps ? httpsReq : httpReq, {
       protocol: current.protocol,
       hostname: current.hostname,
       port: current.port || (isHttps ? 443 : 80),
       path: current.pathname + current.search,
-      method: 'GET',
+      method: method || 'GET',
       headers: reqHeaders,
       // 强制 IPv4，规避外网 DNS 只返回 IPv6 导致的连接超时
       lookup: (host, opt, cb) => dnsLookup(host, { ...opt, family: 4 }, cb),
-    }, timeout);
+    }, timeout, body);
     if (followRedirect && res.status >= 300 && res.status < 400 && res.headers.location) {
       current = new URL(res.headers.location, current);
       used += 1;
@@ -73,7 +78,7 @@ async function nodeFetch(url, { headers, timeout, redirects, followRedirect, ua 
   throw new Error('重定向次数过多');
 }
 
-function nodeReq(requestFn, options, timeoutMs) {
+function nodeReq(requestFn, options, timeoutMs, body) {
   return new Promise((resolve, reject) => {
     const req = requestFn(options, (res) => {
       const chunks = [];
@@ -90,16 +95,19 @@ function nodeReq(requestFn, options, timeoutMs) {
       req.destroy(new Error('请求超时(' + timeoutMs + 'ms)')),
     );
     req.on('error', reject);
+    if (body) req.write(body);
     req.end();
   });
 }
 
 /* ---------------- Cloudflare/浏览器实现（全局 fetch） ---------------- */
-async function envFetch(url, { headers, timeout, followRedirect, ua }) {
+async function envFetch(url, { headers, timeout, followRedirect, ua, method, body }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
     const res = await fetch(url, {
+      method: method || 'GET',
+      body: body || undefined,
       headers: {
         'User-Agent': ua,
         Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',

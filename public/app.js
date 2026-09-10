@@ -160,6 +160,8 @@ function esc(s) {
 
 function render(d) {
   const a = d.aircraft;
+  // 暴露当前飞机 ICAO24，供 route-map.js 向 OpenSky 查询真实轨迹
+  try { window.__aircraftIcao24 = a.icao24 ? String(a.icao24).toLowerCase() : ''; } catch (e) { /* ignore */ }
   // 注册号与主信息
   $('#regBadge').textContent = d.reg.toUpperCase();
   $('#fullType').textContent = a.fullType || '未知机型';

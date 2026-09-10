@@ -5,6 +5,7 @@
 import { lookupAircraft } from './aggregate.js';
 import { queryFlightRoute } from './flightroute.js';
 import { queryFixOnline } from './fixlookup.js';
+import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -72,21 +73,41 @@ export default {
     // /api/route
     if (path === '/api/route') {
       const cs = String(url.searchParams.get('callsign') || '').trim().toUpperCase();
+      const icao24 = String(url.searchParams.get('icao24') || '').trim().toLowerCase();
       if (!cs) return json({ success: false, error: '缺少呼号' }, 400);
       try {
-        const route = await queryFlightRoute(cs);
-        if (!route) return json({ success: false, error: '未查到该航班信息' }, 404);
+        // 并行：FlightAware 航路 + OpenSky 真实轨迹 + OpenSky 历史航班
+        const [route, track, osFlights] = await Promise.all([
+          queryFlightRoute(cs).catch(() => null),
+          icao24 ? queryOpenSkyTrack(icao24).catch(() => null) : Promise.resolve(null),
+          icao24 ? queryOpenSkyFlights(icao24).catch(() => null) : Promise.resolve(null),
+        ]);
+        const trackOut = (track && track.ok)
+          ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
+          : null;
+        // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
+        if (!route && !trackOut) {
+          return json({ success: false, error: '未查到该航班信息' }, 404);
+        }
         return json({
           success: true, callsign: cs,
-          from: route.from, to: route.to,
-          icaoFrom: route.icaoFrom, icaoTo: route.icaoTo,
+          from: route ? route.from : null,
+          to: route ? route.to : null,
+          icaoFrom: route ? route.icaoFrom : '',
+          icaoTo: route ? route.icaoTo : '',
           // filed route（航路详情，可能为空）
-          route: route.route || '',
-          routeAltitude: route.routeAltitude ?? null,
-          routeSpeed: route.routeSpeed ?? null,
-          fuelBurn: route.fuelBurn || null,
-          distance: route.distance ?? null,
-          historicalFlights: route.historicalFlights || [],
+          route: route ? (route.route || '') : '',
+          routeAltitude: route ? (route.routeAltitude ?? null) : null,
+          routeSpeed: route ? (route.routeSpeed ?? null) : null,
+          fuelBurn: route ? (route.fuelBurn || null) : null,
+          distance: route ? (route.distance ?? null) : null,
+          historicalFlights: route ? (route.historicalFlights || []) : [],
+          // OpenSky 真实飞行轨迹（匿名亦可用）
+          track: trackOut,
+          trackError: (track && !track.ok) ? track.error : null,
+          // OpenSky 历史航班（需凭据）
+          openskyFlights: (osFlights && osFlights.ok) ? osFlights.flights : null,
+          openskyFlightsError: (osFlights && !osFlights.ok) ? osFlights.error : null,
         });
       } catch (e) {
         return json({ success: false, error: e.message }, 500);

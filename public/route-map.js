@@ -47,6 +47,7 @@
     '.ap-marker{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);}',
     '.ap-marker.ap-origin{background:#16a34a;}',
     '.ap-marker.ap-dest{background:#dc2626;}',
+    '.route-opensky-row{font-family:"SFMono-Regular","Menlo","Consolas",monospace;font-size:11.5px;color:var(--muted);line-height:1.7;}',
   ].join('\n');
   document.head.appendChild(styleEl);
 
@@ -221,12 +222,42 @@
     return out;
   }
 
+  // 把一段坐标对齐到参考经度所在的世界副本（避免轨迹与航线跨日界线时错位）
+  function alignToFrame(pts, refLng) {
+    if (!pts.length) return pts;
+    const k = Math.round((refLng - pts[0][1]) / 360);
+    if (!k) return pts;
+    return pts.map((p) => [p[0], p[1] + k * 360]);
+  }
+
   // ---- 主绘制 ----
   function drawRoute(data) {
     clearRoute();
     const f = data.from || {}, t = data.to || {};
     const fLL = f.coord ? [f.coord.lat, f.coord.lon] : null;
     const tLL = t.coord ? [t.coord.lat, t.coord.lon] : null;
+    // OpenSky 真实飞行轨迹点（可能为空）
+    const trackPts = (data.track && Array.isArray(data.track.points) && data.track.points.length > 1)
+      ? data.track.points.map((p) => [p[0], p[1]])
+      : null;
+
+    // 没有机场坐标但有真实轨迹时：只绘制轨迹
+    if ((!fLL || !tLL) && trackPts) {
+      const uw = unwrapLng(trackPts);
+      L.polyline(uw, { color: '#22c55e', weight: 3, opacity: .95 }).addTo(routeLayer);
+      const dot = (ll, txt, color) => {
+        const m = L.circleMarker(ll, { radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 1 });
+        m.bindTooltip(txt, { direction: 'top' });
+        m.addTo(routeLayer);
+      };
+      dot(uw[0], '轨迹起点', '#15803d');
+      dot(uw[uw.length - 1], '轨迹终点', '#dc2626');
+      map.fitBounds(L.latLngBounds(uw), { padding: [50, 50], maxZoom: 9 });
+      bodyEl.innerHTML = '<div class="tip">🟢 已绘制 OpenSky <b>真实飞行轨迹</b>（'
+        + trackPts.length + ' 点，原始 ' + (data.track.pointCount || trackPts.length) + ' 点）。'
+        + '该航班无起降机场/航路数据。</div>';
+      return;
+    }
     if (!fLL || !tLL) {
       bodyEl.innerHTML = '<span class="tip">缺少起降机场坐标，无法绘制地图。</span>';
       return;
@@ -311,9 +342,24 @@
       });
     }
 
-    // 视野：优先用经度展开后的路径点（跨太平洋/日界线航线才能正确居中）
-    if (viewPts && viewPts.length >= 2) {
-      map.fitBounds(L.latLngBounds(viewPts), { padding: [50, 50], maxZoom: 9 });
+    // 6) OpenSky 真实飞行轨迹（最准确，绿色实线；对齐到航线所在经度框架）
+    let trackFrame = null;
+    if (trackPts) {
+      trackFrame = alignToFrame(unwrapLng(trackPts), fFrame[1]);
+      L.polyline(trackFrame, { color: '#22c55e', weight: 3, opacity: .95 }).addTo(routeLayer);
+      const dot = (ll, txt, color) => {
+        const m = L.circleMarker(ll, { radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 1 });
+        m.bindTooltip(txt, { direction: 'top' });
+        m.addTo(routeLayer);
+      };
+      dot(trackFrame[0], '轨迹起点', '#15803d');
+      dot(trackFrame[trackFrame.length - 1], '轨迹终点', '#dc2626');
+    }
+
+    // 视野：航线点 + 真实轨迹一起纳入（跨太平洋/日界线航线才能正确居中）
+    const fitPts = (viewPts || []).concat(trackFrame || []);
+    if (fitPts.length >= 2) {
+      map.fitBounds(L.latLngBounds(fitPts), { padding: [50, 50], maxZoom: 9 });
     } else if (boundPts.length >= 2) {
       map.fitBounds(L.latLngBounds(boundPts), { padding: [50, 50], maxZoom: 5 });
     } else {
@@ -333,6 +379,22 @@
       else if (unknownFixes.length) html += '<div class="tip">🟡 航路点暂无坐标数据，按航路顺序沿大圆航线示意分布。</div>';
     } else {
       html += '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
+    }
+    if (trackFrame) {
+      html += '<div class="tip">🟢 绿线为 OpenSky <b>真实飞行轨迹</b>（'
+        + trackFrame.length + ' 点，原始 ' + (data.track.pointCount || trackFrame.length) + ' 点）。</div>';
+    } else if (data.trackError) {
+      html += '<div class="tip">轨迹：' + esc(data.trackError) + '</div>';
+    }
+    // OpenSky 历史航班（需后端配置凭据）
+    if (Array.isArray(data.openskyFlights) && data.openskyFlights.length) {
+      const rows = data.openskyFlights.slice(0, 6).map((h) => {
+        const t = h.firstSeen ? new Date(h.firstSeen * 1000).toISOString().slice(5, 16).replace('T', ' ') : '';
+        return '<div class="route-opensky-row">' + esc(t) + '　' + esc(h.callsign || '-')
+          + '　' + esc(h.fromIcao || '?') + ' → ' + esc(h.toIcao || '?') + '</div>';
+      }).join('');
+      html += '<div class="tip" style="margin-top:8px">OpenSky 历史航班（'
+        + data.openskyFlights.length + ' 条）</div>' + rows;
     }
     const meta = [];
     if (data.routeAltitude != null) meta.push('计划高度 FL' + data.routeAltitude);
@@ -375,17 +437,22 @@
     requestAnimationFrame(() => { map.invalidateSize(); map.setView([20, 0], 2); });
 
     try {
-      const res = await fetch('/api/route?callsign=' + encodeURIComponent(callsign));
+      // 带上当前飞机的 ICAO24，后端据此并行取 OpenSky 真实轨迹/历史航班
+      const icao = (window.__aircraftIcao24 || '').toLowerCase();
+      const url = '/api/route?callsign=' + encodeURIComponent(callsign)
+        + (icao ? '&icao24=' + encodeURIComponent(icao) : '');
+      const res = await fetch(url);
       const data = await res.json();
       if (mySeq !== fetchSeq) return; // 已被新请求覆盖
-      if (!res.ok || !data.success || !data.from || !data.to) {
+      // 允许「只有真实轨迹、没有机场数据」的情况
+      if (!res.ok || !data.success || (!data.from && !data.track)) {
         throw new Error(data.error || '未查到该航班的航路信息');
       }
-      const f = data.from, t = data.to;
-      subEl.innerHTML =
-        esc((f.code || '') + ' ' + (f.name || '')) + '　→　' +
-        esc((t.code || '') + ' ' + (t.name || '')) +
-        '　<span style="opacity:.5">filed route · 地图 © OpenStreetMap</span>';
+      const f = data.from || null, t = data.to || null;
+      const head = (f && t)
+        ? esc((f.code || '') + ' ' + (f.name || '')) + '　→　' + esc((t.code || '') + ' ' + (t.name || ''))
+        : '仅真实轨迹（无起降机场数据）';
+      subEl.innerHTML = head + '　<span style="opacity:.5">地图 © OpenStreetMap</span>';
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';
       await ensureFixesLoaded();
       drawRoute(data);
