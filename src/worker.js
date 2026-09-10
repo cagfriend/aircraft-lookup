@@ -74,10 +74,10 @@ export default {
     // 临时诊断（用完删除）
     if (path === '/api/_diag2') {
       const tests = [
-        ['root-8s', 'https://opensky-network.org/', 8000],
-        ['states-8s', 'https://opensky-network.org/api/states/all?icao24=780c96', 8000],
-        ['states-25s', 'https://opensky-network.org/api/states/all?icao24=780c96', 25000],
-        ['auth-8s', 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token', 8000],
+        ['opensky-states', 'https://opensky-network.org/api/states/all?icao24=780c96', 20000],
+        ['adsb.lol', 'https://api.adsb.lol/v2/icao/780c96', 10000],
+        ['adsb.fi', 'https://opendata.adsb.fi/api/v2/icao/780c96', 10000],
+        ['adsbdb', 'https://api.adsbdb.com/v0/aircraft/B-5976', 10000],
       ];
       const out = {};
       for (const [name, u, to] of tests) {
