@@ -1,7 +1,7 @@
 // src/opensky.js — OpenSky 网络(ADS-B)：实时状态 + 真实飞行轨迹 + 历史航班
 // 认证：OAuth2 client credentials（需 OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET）
 // 未配置凭据时：实时状态与轨迹仍可匿名使用（配额较低 400/天），历史航班不可用。
-import { fetchURL, parseJSON } from './fetch.js';
+import { fetchURL, parseJSON, IS_NODE } from './fetch.js';
 
 const STATE_URL   = 'https://opensky-network.org/api/states/all';
 const TRACK_URL   = 'https://opensky-network.org/api/tracks/all';
@@ -38,8 +38,11 @@ export function openskyEnabled() {
   return !!(env('OPENSKY_CLIENT_ID') && env('OPENSKY_CLIENT_SECRET'));
 }
 
-// 请求超时：OpenSky 有时不可达，超时设短一点避免拖慢主流程
-const OS_TIMEOUT = Number(env('OPENSKY_TIMEOUT_MS')) || 6000;
+// 请求超时。
+// - Node（本地）：OpenSky 直连可用（通常 1-2s），给 6s 余量。
+// - Cloudflare Worker：实测访问 OpenSky 必然 522/超时，且轨迹与实时位置已由 FlightAware 兜底，
+//   因此用更短超时。实测线上 /api/route 的 8-9s 中有 6-7s 纯粹在等这个必然失败的请求。
+const OS_TIMEOUT = Number(env('OPENSKY_TIMEOUT_MS')) || (IS_NODE ? 6000 : 1500);
 
 // 熔断：OpenSky 连续不可达（如 Cloudflare 边缘返回 522）时，短时间内不再尝试，
 // 避免每次查询都白等一个超时。

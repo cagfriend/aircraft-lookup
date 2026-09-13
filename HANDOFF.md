@@ -127,6 +127,10 @@
 
 ## 待办 / 开放问题
 
+- 🔧 **延迟修正（2026-09 实测）**：线上 `/api/route` 曾实测 **8-9s**，其中 **6-7s 纯粹在等必然失败的 OpenSky 超时**（对照：不带 `icao24` 时只要 1.1-2.1s）。已按环境区分超时：**Node 6s / Cloudflare 1.5s**（`opensky.js`，可用 `OPENSKY_TIMEOUT_MS` 覆盖）。同时实测 **FlightAware 从 CF 边缘只需 1-2s** —— 此前本文档里"7-26s"是本地直连的旧数据，偏悲观，已修正。
+  - 副作用：若 OpenSky 将来从 CF 恢复但响应慢于 1.5s，会退化为使用 FlightAware（轨迹仍正常）。
+  - 验证方式：用 loader 把 `fetch.js` 的 `IS_NODE` 置为 `false`，即可在本地跑**真实的 Cloudflare 分支**（`envFetch` + 短超时）。实测总耗时 ≈ FlightAware 抓取时间，`trackSource=FlightAware`、377 点、`live` 正常；同进程第二次调用 **1ms**（缓存命中）。**该实验顺带验证了 `fetch.js` 的 Cloudflare 分支可用** —— 这条路径历史上炸过两次
+
 - ✅ **P1 线上轨迹已解决（2026-09）**：OpenSky 从 CF 边缘**永久不可达**（522，且第三方 CF 中转同样 522，属链路问题），已改用 **FlightAware 内嵌 track 兜底**，线上绿线真实轨迹恢复（实测 915 点 + 当前位置），零新增基建。详见上方“实时轨迹兜底”。
 - 🟡 **主查询页“实时位置”面板：已实现，待部署验证**（代码已在本地提交，未推送）。`/api/query` 的 `live` 线上仍是 `{airborne:false, note:'The operation was aborted'}`，只回退展示 airport-data 的 `lastSeen`（最近航班记录坐标，非实时）。
   - **为什么不做“点击按钮懒加载”**：实测 FlightAware **没有**轻量 JSON 端点 —— 页面里唯一的数据型 AJAX 是 `ajax/flight/map/...`，它返回的是 **PNG 图片**（101KB / 10.7s），比整页还慢。所以“省一次点击”只能靠后台任务。
