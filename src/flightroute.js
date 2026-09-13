@@ -169,6 +169,19 @@ function extractLiveTrack(bootstrap) {
 }
 
 /**
+ * 只读缓存：取某呼号已缓存的实时轨迹（**绝不发起网络请求**）。
+ * 供 /api/live 使用 —— 该接口必须恒定快返回，上游抓取由主查询用 waitUntil 后台预热。
+ * @returns {object|null} 与 extractLiveTrack 同结构；未缓存时返回 null
+ */
+export function peekLiveTrack(callsign) {
+  const cs = (callsign || '').trim().toUpperCase();
+  if (!cs) return null;
+  const hit = routeCache.get(cs);
+  if (!hit || !hit.data || !hit.data.liveTrack) return null;
+  return hit.data.liveTrack;
+}
+
+/**
  * 查询某呼号的执飞航线（含 filed route / 航路点序列 / 飞行计划）
  * @param {string} callsign 如 AAR223 / CES586 / DAL284
  * @returns {Promise<object|null>}

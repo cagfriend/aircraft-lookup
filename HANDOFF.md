@@ -107,8 +107,14 @@
 ## 待办 / 开放问题
 
 - ✅ **P1 线上轨迹已解决（2026-09）**：OpenSky 从 CF 边缘**永久不可达**（522，且第三方 CF 中转同样 522，属链路问题），已改用 **FlightAware 内嵌 track 兜底**，线上绿线真实轨迹恢复（实测 915 点 + 当前位置），零新增基建。详见上方“实时轨迹兜底”。
-- ⚠️ **仍未解决：主查询页的“实时位置”面板**。`/api/query` 的 `live` 线上仍是 `{airborne:false, note:'The operation was aborted'}`，只回退展示 airport-data 的 `lastSeen`（最近航班记录坐标，非实时）。**轨迹卡片（点航段打开地图）里已能看到实时位置**。
-  - 若要让面板也实时：**推荐懒加载** —— 不要在 `/api/query` 里加 FlightAware 抓取（页面 7-26s，会把主查询拖慢一倍），而是在前端“已起飞但无位置”时给个按钮，点击后才走 `/api/route`。
+- 🟡 **主查询页“实时位置”面板：已实现，待部署验证**（代码已在本地提交，未推送）。`/api/query` 的 `live` 线上仍是 `{airborne:false, note:'The operation was aborted'}`，只回退展示 airport-data 的 `lastSeen`（最近航班记录坐标，非实时）。
+  - **为什么不做“点击按钮懒加载”**：实测 FlightAware **没有**轻量 JSON 端点 —— 页面里唯一的数据型 AJAX 是 `ajax/flight/map/...`，它返回的是 **PNG 图片**（101KB / 10.7s），比整页还慢。所以“省一次点击”只能靠后台任务。
+  - **采用的方案：后台预热 + 前端轮询**（Cloudflare 原生能力，零点击、不拖慢主查询）
+    1. `/api/query` 返回后，若 OpenSky 未拿到位置且有呼号，用 `ctx.waitUntil(queryFlightRoute(cs))` **后台预热**（本地 Express 用 fire-and-forget 等价实现）；**不阻塞响应**。
+    2. 新端点 `/api/live?callsign=X`：**只读内存缓存**（`peekLiveTrack()`，绝不发起网络请求），因此恒定快返回；未预热好则返回 `{pending:true}`。
+    3. 前端 `app.js` 的 `maybePollLive()`：面板为“未在空中”且有呼号时，每 5s 轮询一次、最多 8 次（≈40s，覆盖 FA 的 7-26s 抓取），拿到后直接复用 `renderLive()` 渲染；新查询会令旧轮询失效，避免迟到响应覆盖结果。
+  - **防滥用守卫**：只有当 airport-data 的最近航班记录在 **2 小时内**（`currentRoute.time` 解析后比较）才预热，避免为早已落地的航班白抓 FlightAware（其页面 500KB 且反爬）。
+  - **本地已验证**：冷缓存 → `pending:true`；预热后 → `pending:false` + 位置/高度/速度/航向/最近机场（DLH521→RTM 47km、UAL286→FL350）。`ctx.waitUntil` 与浏览器轮询需线上验证。
 - ⚠️ **OpenSky 的“历史航班”`/api/route` → `openskyFlights` 线上同样不可用**（需凭据 + 且链路不通）。但 FlightAware 的 `historicalFlights`（约 23 条）是通的、且已返回，只是前端还没做 UI。
 - **待配置**：`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`（不配也能跑：实时+轨迹匿名可用，仅"历史航班"不可用；云端本就不可达）。`OPENNAV_TOKEN` 未配置 → 非美国航路点（南美等）仍走大圆示意。
 - **P0 待用户确认**：手机端曾报"未查到该航班信息"，判断为故障窗口 + 浏览器 30min 缓存所致（桌面读缓存、手机打源站）。已加 **CF 机房标识(colo)** 便于复查，等手机复测；若复测仍失败，看错误提示里的**机房号**。

@@ -220,7 +220,10 @@ function render(d) {
   $('#icaoValue').textContent = a.icao24 ? `ICAO24: ${a.icao24.toUpperCase()}` : '';
 
   renderCurrentRoute(d.currentRoute, a);
+  stopLivePoll();
+  livePollCallsign = null;
   renderLive(d.live);
+  maybePollLive(d);
   renderRoutes(d.routes);
   renderTech(a);
   renderSources(d.sources);
@@ -268,6 +271,43 @@ function renderCurrentRoute(cr, a) {
   note.textContent = '';
 }
 
+// 实时位置轮询：OpenSky 在 CF 边缘不可达，后端会用后台任务预热 FlightAware，
+// 这里定时拉取 /api/live（只读缓存、恒定快返回）。填入结果后自动停止。
+let livePollTimer = null;
+let livePollCallsign = null;   // 当前轮询对应的呼号（新查询会使其失效）
+function stopLivePoll() {
+  if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
+}
+function maybePollLive(d) {
+  stopLivePoll();
+  const live = d.live || {};
+  const cs = d.currentRoute && d.currentRoute.callsign;
+  if (live.airborne || !cs) return;
+  livePollCallsign = cs;
+  const note = document.getElementById('livePollNote');
+  if (note) note.textContent = '正在后台获取实时位置…';
+  let tries = 0;
+  const MAX_TRIES = 8;      // 8 × 5s ≈ 40s，覆盖 FlightAware 抓取的 7-26s
+  livePollTimer = setInterval(async () => {
+    tries += 1;
+    try {
+      const r = await fetch('/api/live?callsign=' + encodeURIComponent(cs));
+      const j = await r.json();
+      if (cs !== livePollCallsign) { stopLivePoll(); return; }   // 已发起新查询，丢弃迟到响应
+      if (j && j.success && !j.pending && j.live) {
+        stopLivePoll();
+        renderLive(j.live);
+        return;
+      }
+    } catch (e) { /* 忽略单次失败，继续重试 */ }
+    if (tries >= MAX_TRIES) {
+      stopLivePoll();
+      const n = document.getElementById('livePollNote');
+      if (n) n.textContent = '';
+    }
+  }, 5000);
+}
+
 function renderLive(live) {
   const box = $('#liveBox');
   const nearText = (n) => (n ? `${n.iata} ${n.name || n.city || ''} (~${n.distKm}km)` : '');
@@ -288,7 +328,8 @@ function renderLive(live) {
         <span>航向：<b>${esc(ls.heading || '—')}</b></span>
       </div>`;
     }
-    box.innerHTML = `<span class="badge-status off">未在空中</span><div class="route-note">${esc(n)}</div>${lastSeenHtml}`;
+    box.innerHTML = `<span class="badge-status off">未在空中</span><div class="route-note">${esc(n)}</div>`
+      + `<div class="route-note" id="livePollNote" style="opacity:.75"></div>${lastSeenHtml}`;
     return;
   }
   const gps = (live.latitude != null && live.longitude != null)

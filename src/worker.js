@@ -3,7 +3,8 @@
 // 静态资源(public/)由 Cloudflare assets 托管；这里只处理 API。
 
 import { lookupAircraft } from './aggregate.js';
-import { queryFlightRoute } from './flightroute.js';
+import { queryFlightRoute, peekLiveTrack } from './flightroute.js';
+import { nearestAirport } from './airports.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
 
@@ -46,7 +47,7 @@ async function handleImg(url) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -64,6 +65,16 @@ export default {
           forceRefresh: url.searchParams.get('refresh') === '1',
         });
         if (!data.success) return json(data, 404);
+        // OpenSky 在 CF 边缘不可达时，用后台任务预热 FlightAware 实时位置（不阻塞响应）：
+        // 前端随后轮询 /api/live 取回结果，从而自动填上"实时位置"面板。
+        const cs = data.currentRoute && data.currentRoute.callsign;
+        if (!(data.live && data.live.airborne) && cs && ctx && typeof ctx.waitUntil === 'function') {
+          // 仅在"最近航班记录仍新鲜"时预热，避免为早已落地的航班白抓 FlightAware（反爬风险）
+          const recTime = data.currentRoute.time
+            ? Date.parse(String(data.currentRoute.time).replace(' ', 'T').replace(' UTC', 'Z')) : NaN;
+          const stillFresh = isNaN(recTime) || (Date.now() - recTime) < 2 * 3600 * 1000;
+          if (stillFresh) ctx.waitUntil(queryFlightRoute(cs).catch(() => null));
+        }
         return json(data);
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
@@ -128,6 +139,36 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
+    }
+
+    // /api/live（实时位置轮询：只读缓存，恒定快返回；数据由 /api/query 后台预热）
+    if (path === '/api/live') {
+      const cs = String(url.searchParams.get('callsign') || '').trim().toUpperCase();
+      if (!cs) return json({ success: false, error: '缺少呼号' }, 400);
+      const lt = peekLiveTrack(cs);
+      if (!lt || !lt.live) return json({ success: true, callsign: cs, pending: true });
+      const lv = lt.live;
+      const na = (lv.latitude != null && lv.longitude != null)
+        ? nearestAirport(lv.latitude, lv.longitude) : null;
+      return json({
+        success: true, callsign: cs, pending: false, source: lt.source,
+        live: {
+          airborne: !lv.onGround,
+          callsign: lt.callsign || cs,
+          latitude: lv.latitude,
+          longitude: lv.longitude,
+          altitudeBaro: lv.altitudeFt,
+          altitudeGeo: lv.altitudeFt,
+          onGround: !!lv.onGround,
+          groundSpeedKnots: lv.groundSpeedKnots,
+          groundSpeedKmh: lv.groundSpeedKnots != null ? Math.round(lv.groundSpeedKnots * 1.852) : null,
+          heading: lv.heading,
+          squawk: '',
+          verticalRate: null,
+          status: lv.status || '',
+          near: na ? { iata: na.iata, icao: na.icao, name: na.name, city: na.city, country: na.country, distKm: Math.round(na.distKm) } : null,
+        },
+      });
     }
 
     // /api/fix（在线补充航路点坐标，需 OPENNAV_TOKEN）
