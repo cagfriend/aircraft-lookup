@@ -126,7 +126,13 @@
 ## 部署注意
 
 - 推送到 GitHub main → Cloudflare **自动部署**（autoDeploy 已开），约 **45-90 秒**生效；前端资产需 **Ctrl+F5** 强刷。
-- ⚠️ **推送不再需要 VPN（2026-09 实测变更）**：GitHub 现已可**直连**（`curl https://github.com` 1.2s 返回 200），而 clash 代理 `127.0.0.1:7897` 当时是**死的**（`curl -x` 连接失败）。git 里仍配着 `http.proxy=http://127.0.0.1:7897`，所以默认 `git push` 会因代理不通而失败 —— **用 `git -c http.proxy= -c https.proxy= push origin main` 绕过代理即可成功**。若哪天直连又不通，再回头试代理。
+- ⚠️ **推送通道会来回翻转，每次先探测再推（2026-09 实测）**：
+  - 情况 A：**直连可用、代理已死** → 默认 `git push` 会因代理不通而失败，要用 `git -c http.proxy= -c https.proxy= push origin main` 绕过代理。
+  - 情况 B：**直连不可用、代理恢复**（同一会话内就发生过翻转）→ 直接用默认 `git push`（走 `http://127.0.0.1:7897`）。
+  - 探测方法（两条都测，谁通用谁）：`curl -s -o /dev/null -w '%{http_code}' --max-time 12 https://github.com` 与 `curl -s -o /dev/null -w '%{http_code}' --max-time 12 -x http://127.0.0.1:7897 https://github.com`。
+  - 提示：`api.github.com` 可能与 `github.com` 表现不同（曾出现 api 通而 git 推送不通），以实际 `git push` 为准。
+- 小坑：`git push ... | tail -3` 的退出码是 `tail` 的，**永远为 0**，会把失败当成功（曾据此误判推送成功）。要判断结果得用 `PIPESTATUS` 或直接看输出。
+- 小坑：验证线上是否部署时，`/index.html` 会 **307 跳转到 `/`**；curl 必须加 `-L`，否则拿到空 body、误判成"没部署"（今天就被这个骗过一次）。
 - 小坑：`git push ... | tail -3` 的退出码是 `tail` 的，**永远为 0**，会把失败当成功（曾据此误判推送成功）。要判断结果得用 `PIPESTATUS` 或直接看输出。
 - 若域名/DNS 有问题，域名在腾讯云买，NS 指向 Cloudflare（michelle/kenneth.ns.cloudflare.com）。
 - 3.3MB 的 `fixes.data.js` 部署没问题（上限 25MiB）；历史上部署失败的真凶是上面第 8 条。
