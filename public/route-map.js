@@ -484,6 +484,7 @@
     // 容器由 hidden 变为可见后重新计算尺寸，避免地图空白
     requestAnimationFrame(() => { map.invalidateSize(); map.setView([20, 0], 2); });
 
+    let respColo = '';
     try {
       // 带上当前飞机的 ICAO24，后端据此并行取 OpenSky 真实轨迹/历史航班
       const icao = (window.__aircraftIcao24 || '').toLowerCase();
@@ -491,6 +492,7 @@
         + (icao ? '&icao24=' + encodeURIComponent(icao) : '');
       const res = await fetch(url);
       const data = await res.json();
+      respColo = data && data.colo ? data.colo : '';
       if (mySeq !== fetchSeq) return; // 已被新请求覆盖
       // 允许「只有真实轨迹、没有机场数据」的情况
       if (!res.ok || !data.success || (!data.from && !data.track)) {
@@ -511,7 +513,9 @@
       if (mySeq !== fetchSeq) return;
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';
       subEl.textContent = '';
-      bodyEl.innerHTML = '<span class="tip" style="color:var(--err)">' + esc(e.message) + '</span>';
+      // 附上机房标识，便于排查"某设备/某地区失败"
+      const coloTip = respColo ? '　<span style="opacity:.5">（机房 ' + esc(respColo) + '）</span>' : '';
+      bodyEl.innerHTML = '<span class="tip" style="color:var(--err)">' + esc(e.message) + '</span>' + coloTip;
     }
   }
 
