@@ -76,6 +76,25 @@
   - KAL259（ANC→ORD）**10 点**（刚起飞 3400ft）：短轨迹同样可用
   - 响应体积约 47KB（915 点），可接受；OpenSky 熔断生效时 `trackError` 显示“OpenSky 暂时不可达（熔断中）”
   - **覆盖面抽样（8 个不同呼号：UAL2814 / AAL1229 / AAL2459 / UAL2225 / FFT3108 / AAY2056 / ASA468 / 公务机 VJA537）**：全部返回 `trackSource=FlightAware` + `live`，点数 66～304。**结论：不挑航司/机型，公务机也能拿到。**
+### FlightAware 轻量轮询端点 `/ajax/trackpoll.rvt`（2026-09 发现，**尚未采用**）
+
+整页 554KB / ~9s 是当前唯一的抓取方式，但对“后台预热实时位置”来说太重。深挖其前端脚本后发现官方自己的轮询端点：
+
+- **端点来源**：页面加载 `/include/<hash>-maps/TrackPollClient.js`，其中
+  `this.endpoint = '/ajax/trackpoll.rvt' + window.location.search;`
+  `this.poll = function(){ $.get(this.endpoint, { token: this.token, locale, summary }) ... }`
+- **token 来源**：页面内嵌 `trackpollGlobals = { "TOKEN": "…", "INTERVAL": 60, "SINGLE_FLIGHT": true, "USERTOKEN": "…" }`
+- **实测调用**：`GET https://www.flightaware.com/ajax/trackpoll.rvt?token=<TOKEN>&locale=en_US&summary=0`（带 `Referer` 指向该航班页）
+  - 返回 **200 / 95KB / 1.9–2.7s**（对比整页 **554KB / ~9s**：**小 5.8 倍、快 4.7 倍**，`Content-Type: application/json`）
+  - 结构：`{ version, summary, flights: { "UAL286-1789034977-fa-1255p:0": { track: [{timestamp, coord:[lon,lat], alt(×100ft), gs}], flightStatus, heading, altitude, groundspeed, flightPlan, activityLog, … } } }`
+  - **轨迹顺序为“起飞 → 当前”**（与 bootstrap 一致）。注意 `TrackPollClient` 里那段 `track.reverse()` 只作用于它自己的 replay 数据，**不适用于本端点**，别被误导
+- ✅ **token 可复用**：同一 token 在 **130 秒后仍有效**，且返回了更新的轨迹（533 → 538 点、末点时间前移）。官方前端每 65s 轮询一次（`INTERVAL:60`）
+- **价值**：一次整页抓取拿到 token 后，**后续刷新位置只需 95KB/2s** —— 可把 `/api/live` 的预热/刷新代价降低约 5.8 倍，或让前端以 ~60s 间隔真正“实时”刷新位置
+- ⚠️ **风险与实现要点（尚未实现，等决策）**：
+  - 这是**未公开文档**的端点，可能随时变更；失效时必须能回退到整页抓取
+  - 首次仍需要整页（token 只存在于页面里）；`Referer` 可能必需
+  - 实现思路：`flightroute.js` 在整页抓取时顺带缓存 token → 新增 `refreshLiveTrack()` 走 trackpoll 更新缓存的 `liveTrack` → `/api/query` 预热时若有 token 用 refresh，否则整页
+
   - ⚠️ **已知瞬时失败率 ≈ 1/8**：AAL2459 首次请求返回 `{success:false, error:'未查到该航班信息'}`，**同一呼号重查即成功**（FlightAware 抖动；失败结果不写入缓存）。前端目前会显示“未查到该航班信息”形成死路，**建议后续在卡片里加一个“重试”按钮**（尚未实现）。
 - **地图实现**：Leaflet **本地托管**（`public/vendor/leaflet`）；瓦片源三级自动降级：高德 → OSM → CARTO（手机端曾因高德不可达导致底图空白）。
 - **跨日界线**：`unwrapLng()` 展开经度，`chainFrame`/`alignToFrame()` 让机场+航路点+折线统一经度框架。**否则跨太平洋会画成横穿地图的直线，或丢掉终点。**
