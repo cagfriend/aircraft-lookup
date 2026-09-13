@@ -82,6 +82,11 @@
           <h3 class="card-title">当前执飞航线</h3>
           <div id="currentRoute" class="route-box"></div>
           <div class="route-note" id="routeNote"></div>
+          <!-- 抓到当前航班航路后，直接在此内嵌显示地图与航路（无需点击） -->
+          <div id="inlineRouteWrap" class="hidden">
+            <div id="inlineRouteMap" class="route-map inline-route-map"></div>
+            <div id="inlineRouteBody" class="inline-route-body"></div>
+          </div>
         </div>
         <!-- 实时状态 -->
         <div class="card">

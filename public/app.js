@@ -102,6 +102,7 @@ $('#refreshBtn').addEventListener('click', () => {
 
 // ===== 查询 =====
 const NEAR_KM = 10;
+let lastInlineCallsign = '';   // 已内嵌渲染过的呼号，避免重复请求
 
 const searchForm = $('#searchForm');
 const regInput = $('#regInput');
@@ -237,6 +238,8 @@ function renderCurrentRoute(cr, a) {
   if (!cr || (!cr.from.code && !cr.to.code && !cr.callsign && !cr.near)) {
     box.innerHTML = '<div style="color:var(--muted)">暂无近期执飞航线信息</div>';
     note.textContent = '';
+    lastInlineCallsign = '';
+    if (typeof window.clearInlineRoute === 'function') window.clearInlineRoute();
     return;
   }
   let routeHtml = '';
@@ -269,6 +272,18 @@ function renderCurrentRoute(cr, a) {
       ${nearMeta}
     </div>`;
   note.textContent = '';
+
+  // 抓到"当前执飞航班"的航路后，直接在卡片里内嵌显示地图与航路（无需点击按钮）。
+  // 后端在 /api/query 时已用后台任务预热同一呼号的航路，因此这里通常直接命中服务端缓存。
+  if (cr.callsign && typeof window.renderInlineRoute === 'function') {
+    if (cr.callsign !== lastInlineCallsign) {
+      lastInlineCallsign = cr.callsign;
+      window.renderInlineRoute(cr.callsign, { icao24: window.__aircraftIcao24 });
+    }
+  } else {
+    lastInlineCallsign = '';
+    if (typeof window.clearInlineRoute === 'function') window.clearInlineRoute();
+  }
 }
 
 // 实时位置轮询：OpenSky 在 CF 边缘不可达，后端会用后台任务预热 FlightAware，

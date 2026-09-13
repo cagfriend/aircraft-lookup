@@ -10,11 +10,26 @@
   const modal = q('#routeModal');
   const titleEl = q('#routeCardTitle');
   const subEl = q('#routeCardSub');
-  const bodyEl = q('#routeCardBody');
+  const modalBodyEl = q('#routeCardBody');
   const closeBtn = q('#routeCardClose');
 
+  // ---- 绘制目标（弹层 / 结果页卡片内嵌）----
+  // drawRoute 及其下所有绘制只通过 map / routeLayer / bodyEl 三个指针工作；
+  // 切换目标即可复用同一套绘制逻辑，避免两份实现各自漂移。
+  const modalTarget = { mapEl: 'routeMap', map: null, layer: null, body: modalBodyEl };
+  const inlineTarget = { mapEl: 'inlineRouteMap', map: null, layer: null, body: null };
+  let target = modalTarget;
   let map = null;
   let routeLayer = null;
+  let bodyEl = modalBodyEl;
+
+  function useTarget(t) {
+    target = t;
+    map = t.map;
+    routeLayer = t.layer;
+    bodyEl = t.body;
+  }
+  function syncTarget() { target.map = map; target.layer = routeLayer; target.body = bodyEl; }
   let fetchSeq = 0; // 防止过期请求覆盖新请求
   let fixesLoaded = false; // 航路点数据库是否已懒加载
   const onlineFixCache = {}; // OpenNav 在线解析出的坐标缓存
@@ -202,15 +217,14 @@
     return pts;
   }
 
-  // ---- Leaflet 初始化（弹层显示后再建，否则容器尺寸为 0）----
-  let attributionCtl = null;
+  // ---- Leaflet 初始化（容器可见后再建，否则尺寸为 0）----
 
   // 添加当前瓦片源；加载失败(连续错误或超时)时自动降级到下一个源，并只保留当前源的版权
   function addTileSource() {
     const set = TILE_SETS[tileSourceIdx];
     const layer = L.tileLayer(set.url, set.opts).addTo(map);
-    if (attributionCtl) map.removeControl(attributionCtl);
-    attributionCtl = L.control.attribution({ prefix: false }).addAttribution('地图 © ' + set.label).addTo(map);
+    if (map.__attrCtl) map.removeControl(map.__attrCtl);
+    map.__attrCtl = L.control.attribution({ prefix: false }).addAttribution('地图 © ' + set.label).addTo(map);
     let errors = 0;
     const fail = () => {
       if (tileSourceIdx >= TILE_SETS.length - 1) return;
@@ -227,11 +241,12 @@
 
   function initMap() {
     if (map) return map;
-    map = L.map('routeMap', { zoomControl: false, attributionControl: false });
+    map = L.map(target.mapEl, { zoomControl: false, attributionControl: false });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     addTileSource();
     // 初始给一个世界视野，让地图立刻有内容，避免等待接口返回期间白屏
     map.setView([20, 0], 2);
+    syncTarget();
     return map;
   }
 
@@ -239,6 +254,7 @@
     if (routeLayer) { routeLayer.clearLayers(); return; }
     initMap();
     routeLayer = L.layerGroup().addTo(map);
+    syncTarget();
   }
 
   // 机场图钉
@@ -485,6 +501,7 @@
   // ---- 对外：点击航段后打开 ----
   async function openRouteCard(callsign) {
     if (!callsign) return;
+    useTarget(modalTarget);   // 弹层与内嵌共用绘制逻辑，这里切回弹层目标
     const mySeq = ++fetchSeq;
     show(modal);
     titleEl.textContent = callsign.toUpperCase() + ' 航路';
@@ -549,10 +566,71 @@
   // ---- 航段点击委托（route-q-btn 与 seg-click 都打开地图卡片）----
   document.addEventListener('click', (e) => {
     const qbtn = e.target.closest('.route-q-btn');
-    if (qbtn) { e.preventDefault(); openRouteCard(qbtn.dataset.callsign); return; }
+    if (qbtn) {
+      e.preventDefault();
+      if (qbtn.dataset.inline === '1') { renderInlineRoute(qbtn.dataset.callsign); return; }
+      openRouteCard(qbtn.dataset.callsign);
+      return;
+    }
     const seg = e.target.closest('.seg-click');
     if (seg) { e.preventDefault(); openRouteCard(seg.dataset.callsign); }
   });
 
+  // ---- 结果页卡片内嵌渲染 ----
+  // 抓到"当前执飞航班"的航路后，直接在#当前执飞航线 卡片里画出地图与航路（无需点击）。
+  // 后端在 /api/query 时会用后台任务预热同一呼号的航路，因此这里通常命中服务端缓存。
+  let inlineSeq = 0;
+
+  async function renderInlineRoute(callsign, opts = {}) {
+    const cs = String(callsign || '').trim().toUpperCase();
+    const wrap = q('#inlineRouteWrap');
+    const mapEl = q('#inlineRouteMap');
+    const inlineBody = q('#inlineRouteBody');
+    if (!cs || !wrap || !mapEl || !inlineBody) return false;
+
+    const mySeq = ++inlineSeq;
+    inlineTarget.body = inlineBody;
+    useTarget(inlineTarget);
+    initMap();
+    wrap.classList.remove('hidden');
+    bodyEl.innerHTML = '<span class="tip">航路加载中…</span>';
+    requestAnimationFrame(() => { map.invalidateSize(); });
+
+    try {
+      const icao = String(opts.icao24 || window.__aircraftIcao24 || '').toLowerCase();
+      const url = '/api/route?callsign=' + encodeURIComponent(cs)
+        + (icao ? '&icao24=' + encodeURIComponent(icao) : '');
+      const res = await fetch(url);
+      const data = await res.json();
+      if (mySeq !== inlineSeq) return false;   // 已有更新的内嵌请求，丢弃本次
+      if (!res.ok || !data.success || (!data.from && !data.track)) {
+        throw new Error(data.error || '未查到该航班的航路信息');
+      }
+      await ensureFixesLoaded();
+      if (mySeq !== inlineSeq) return false;
+      drawRoute(data);
+      requestAnimationFrame(() => { map.invalidateSize(); });
+      resolveUnknownOnline();
+      return true;
+    } catch (e) {
+      if (mySeq !== inlineSeq) return false;
+      // 内嵌是自动发起的，失败提示用弱化样式（弹层是用户主动点击，仍用红色）
+      // data-inline=1：交给 document 上的委托重试"内嵌"而不是打开弹层
+      bodyEl.innerHTML = '<span class="tip" style="color:var(--muted)">' + esc(e.message) + '</span>'
+        + '<div class="route-q-wrap" style="margin-top:8px">'
+        + '<button class="route-q-btn" type="button" data-inline="1" data-callsign="' + esc(cs) + '">🔄 重试</button>'
+        + '</div>';
+      return false;
+    }
+  }
+
+  function clearInlineRoute() {
+    inlineSeq += 1;   // 让在途的内嵌请求失效
+    const wrap = q('#inlineRouteWrap');
+    if (wrap) wrap.classList.add('hidden');
+  }
+
   window.openRouteCard = openRouteCard;
+  window.renderInlineRoute = renderInlineRoute;
+  window.clearInlineRoute = clearInlineRoute;
 })();

@@ -398,6 +398,17 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .route-wpt .coord-tip { font-size: 10px; color: var(--muted); display: block; }
 .route-metric-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12.5px; }
 
+/* 结果页内嵌航路地图（"当前执飞航线"卡片内；与弹层共用 .route-map 的暗色瓦片适配） */
+.inline-route-map {
+  height: 300px;
+  margin-top: 12px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.inline-route-body { margin-top: 8px; }
+.inline-route-body .tip { font-size: 12px; color: var(--muted); }
+
 /* 地图暗色主题适配（Leaflet 瓦片反色） */
 html:not(.light) .route-map .leaflet-tile {
   filter: brightness(.65) invert(1) contrast(1.2) hue-rotate(180deg);

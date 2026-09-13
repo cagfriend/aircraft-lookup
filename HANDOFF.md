@@ -61,6 +61,12 @@
   - **结论**：CF 边缘自身出网完全正常（对照 200），但**“Cloudflare 网络 → OpenSky”这一跳整体不通**。关键证据：连第三方中转 `codetabs`（同样架在 Cloudflare 上）代取 OpenSky 时也返回 **522** —— 说明断点在 CF→OpenSky，不是我们的 Worker 代码或出口 IP 策略。因此“换成另一个免费 ADS-B 源”这条路基本被堵死（可用的都被 CF 拦截或按 IP 限流）。
   - ✅ **已采用的解法：改用 FlightAware 作为轨迹来源**（详见下方“实时轨迹兜底”），因为 FlightAware 从 CF 是通的（`/api/route` 一直在用它取航路）。**零新增基建、零额外请求**——轨迹就在我们已经抓取的那个页面的内嵌 JSON 里。
   - 注意：沙箱内 **OpenSky 直连可用，走 clash 代理反而不可用**。
+- **卡片内嵌自动显示（2026-09 新增）**：结果页「当前执飞航线」卡片若有呼号，`app.js` 会自动调用 `window.renderInlineRoute(callsign, {icao24})`，**在卡片内直接画出地图与航路**，无需点击。
+  - 实现要点：`route-map.js` 把绘制目标参数化——`map`/`routeLayer`/`bodyEl` 三个指针由 `useTarget()`/`syncTarget()` 在**弹层**与**内嵌**之间切换，`drawRoute()` 等绘制代码**一行未改**（避免两份实现漂移）。
+  - 瓦片版权控件改为挂在各自地图对象上（`map.__attrCtl`），两张地图互不干扰；内嵌容器复用 `.route-map` 类以继承暗色主题的瓦片反色。
+  - 同呼号不重复请求（`lastInlineCallsign`）；换机时重新渲染；失败时显示**灰色**弱化提示 + 🔄 重试（`data-inline="1"` 让点击委托走内嵌重试，而不是打开弹层）。
+  - 本地验证：假 DOM/Leaflet 驱动真实 `route-map.js`——内嵌 7 项 + 弹层回归 3 项 + 隐藏 1 项全通过；`app.js` 接线 6 项通过。
+
 - **前端**：`/api/route?callsign=X&icao24=Y` 并行取 FlightAware + OpenSky。地图上**绿线 = 真实轨迹**（来源见 `track.source`），蓝线 = filed route 航路点连线，灰虚线 = 大圆兜底。`app.js` 在 render 时把当前机 ICAO24 放到 `window.__aircraftIcao24`
 
 ### 实时轨迹兜底（FlightAware）—— 2026-09 新增
