@@ -102,7 +102,14 @@
   - 实现思路：`flightroute.js` 在整页抓取时顺带缓存 token → 新增 `refreshLiveTrack()` 走 trackpoll 更新缓存的 `liveTrack` → `/api/query` 预热时若有 token 用 refresh，否则整页
 
   - ⚠️ **已知瞬时失败率 ≈ 1/8**：AAL2459 首次请求返回 `{success:false, error:'未查到该航班信息'}`，**同一呼号重查即成功**（FlightAware 抖动；失败结果不写入缓存）。已在卡片错误态加入 **“🔄 重试”按钮**（复用 `document` 上已有的 `.route-q-btn` 委托，无需新增事件绑定）。已用假 DOM + 假 Leaflet 驱动真实 `route-map.js` 验证：错误态渲染出正确的按钮（含 `data-callsign`），点击确实触发新的 `/api/route` 请求（9 项断言全通过）。
-- **地图实现**：Leaflet **本地托管**（`public/vendor/leaflet`）；瓦片源三级自动降级：高德 → OSM → CARTO（手机端曾因高德不可达导致底图空白）。
+- **地图实现**：Leaflet **本地托管**（`public/vendor/leaflet`）；瓦片源自动降级链：**高德 → OSM 官方 → OpenStreetMap DE → OSM France (HOT)**。
+  - ⚠️ **CARTO 已弃用（2026-09 实测）**：`basemaps.cartocdn.com` 现在要求 API key，会返回带 "API KEY REQUIRED" 水印的瓦片（用户实际撞到过）。已从兜底链移除，换成实测可用且无需密钥的 `tile.openstreetmap.de` 与 `a.tile.openstreetmap.fr/hot`。
+  - 实测（本机/国内网络）：高德 200 正常（北京 z=10 陆地区域瓦片约 20KB）；**`tile.openstreetmap.org` 完全不通**；CARTO 不通；`tile.openstreetmap.de` 200/7.9KB ✓；`tile.openstreetmap.fr/hot` 200/13.9KB ✓；Esri World Imagery 200（未采用，卫星图与暗色反色不搭）。
+  - 降级判定：连续 3 次 `tileerror`，或 **9 秒内一块瓦片都没加载成功**（原为 6 秒，移动网络首块可能更慢，易误判）→ 切下一档并保留当前源的版权标注。
+- **连线抑制规则（2026-09，用户要求）**：**已有真实飞行轨迹时，不再绘制"近似连线"**（filed route 折线与大圆示意虚线），只保留：轨迹本身、航路点点位（🔵 已解析 / 🟡 示意）、起降机场。原因：两条几乎重合的线造成视觉干扰，而轨迹才是准确的那条。
+  - 无轨迹时行为不变：有航路则画蓝色折线，无航路则画大圆虚线兜底。
+  - 本地验证（假 DOM/Leaflet + 合成数据）：带轨迹 → 仅 1 条线（绿）；无轨迹有航路 → 1 条（蓝）；无航路 → 1 条（灰虚线）。
+
 - **跨日界线**：`unwrapLng()` 展开经度，`chainFrame`/`alignToFrame()` 让机场+航路点+折线统一经度框架。**否则跨太平洋会画成横穿地图的直线，或丢掉终点。**
 
 - `aggregate.js`：编排+机龄计算+缓存(30min)+最近机场+国家。
