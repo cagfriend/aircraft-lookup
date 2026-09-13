@@ -114,7 +114,18 @@
     2. 新端点 `/api/live?callsign=X`：**只读内存缓存**（`peekLiveTrack()`，绝不发起网络请求），因此恒定快返回；未预热好则返回 `{pending:true}`。
     3. 前端 `app.js` 的 `maybePollLive()`：面板为“未在空中”且有呼号时，每 5s 轮询一次、最多 8 次（≈40s，覆盖 FA 的 7-26s 抓取），拿到后直接复用 `renderLive()` 渲染；新查询会令旧轮询失效，避免迟到响应覆盖结果。
   - **防滥用守卫**：只有当 airport-data 的最近航班记录在 **2 小时内**（`currentRoute.time` 解析后比较）才预热，避免为早已落地的航班白抓 FlightAware（其页面 500KB 且反爬）。
-  - **本地已验证**：冷缓存 → `pending:true`；预热后 → `pending:false` + 位置/高度/速度/航向/最近机场（DLH521→RTM 47km、UAL286→FL350）。`ctx.waitUntil` 与浏览器轮询需线上验证。
+  - **本地已验证**（含 `ctx.waitUntil` 语义与前端渲染契约）：冷缓存 → `pending:true`；预热后 → `pending:false` + 位置/高度/速度/航向/最近机场。
+
+    #### 本地验证 Worker 入口的方法（值得复用）
+
+    本项目历史上两次线上事故都是“本地 Node 走了另一条分支，测不出来”。以下手法可以在**不部署**的前提下执行真实 Worker 代码：
+
+    1. **假 ctx 直接驱动入口**：`import worker from '.../src/worker.js'`，然后 `worker.fetch(new Request('https://x/api/...'), {}, ctx)`。Node 18+ 自带 `Request`/`Response`。用一个 `ctx = { waitUntil(p){...} }` 收集后台任务，就能验证：① 响应是否被后台任务阻塞 ② 任务何时完成。
+       - 实测结果：`/api/query` **3ms 返回**，`waitUntil` 已登记但未完成 → 立即查 `/api/live` 仍是 `pending:true`（证明真在后台跑）→ 3.8s 后返回完整位置。
+    2. **ESM loader 桩**：`aggregate.js` 依赖外网（airport-data 会限流），本地拿不到呼号就没法触发预热分支。用 `module.register()` + `resolve/load` 钩子把 `aggregate.js` 换成合成数据，**worker.js 的真实预热代码照常执行**。
+    3. **假 DOM 驱动前端**：给 `public/app.js` 在 `load` 钩子里追加 `export { renderLive, maybePollLive }`，再提供最小的 `document`/`window`/`localStorage`/`setInterval` 桩，即可在 Node 里跑真实渲染与轮询逻辑。
+       - ⚠️ 坑：`esc()` 是 `div.textContent = s; return div.innerHTML` 的 DOM 惯用法。假元素若不让 `textContent` 影响 `innerHTML`，`esc()` 会恒返回空串 —— 表现为“渲染结构对、内容全空”，**这是桩的问题，不是代码 bug**（我第一次就被误导了）。
+       - 实测结果：渲染契约 8 项全 PASS（chip 数 9、无 undefined/NaN）；轮询 pending→到位后自动切换并停止；新查询会停掉旧轮询。
 - ⚠️ **OpenSky 的“历史航班”`/api/route` → `openskyFlights` 线上同样不可用**（需凭据 + 且链路不通）。但 FlightAware 的 `historicalFlights`（约 23 条）是通的、且已返回，只是前端还没做 UI。
 - **待配置**：`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`（不配也能跑：实时+轨迹匿名可用，仅"历史航班"不可用；云端本就不可达）。`OPENNAV_TOKEN` 未配置 → 非美国航路点（南美等）仍走大圆示意。
 - **P0 待用户确认**：手机端曾报"未查到该航班信息"，判断为故障窗口 + 浏览器 30min 缓存所致（桌面读缓存、手机打源站）。已加 **CF 机房标识(colo)** 便于复查，等手机复测；若复测仍失败，看错误提示里的**机房号**。
