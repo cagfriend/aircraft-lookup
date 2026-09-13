@@ -47,14 +47,26 @@ app.get('/api/route', async (req, res) => {
       icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
       icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
     ]);
+    // 真实轨迹：优先 OpenSky；不可达时用同一页面已抓到的 FlightAware 实时轨迹兜底
+    const faLive = (route && route.liveTrack) ? route.liveTrack : null;
     const trackOut = (track && track.ok)
-      ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
-      : null;
+      ? {
+          callsign: track.callsign, startTime: track.startTime, endTime: track.endTime,
+          pointCount: track.pointCount, points: track.points, source: 'OpenSky',
+        }
+      : (faLive && faLive.points && faLive.points.length > 1)
+        ? {
+            callsign: faLive.callsign, startTime: faLive.startTime, endTime: faLive.endTime,
+            pointCount: faLive.pointCount, points: faLive.points,
+            source: faLive.source, live: faLive.live,
+          }
+        : null;
     // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
     if (!route && !trackOut) {
       return res.status(404).json({ success: false, error: '未查到该航班信息' });
     }
-    res.set('Cache-Control', 'public, max-age=1800');
+    // 含实时轨迹时用短缓存，避免浏览器缓存旧位置（此前 30 分钟缓存曾导致"未查到航班"的假象）
+    res.set('Cache-Control', 'public, max-age=' + (trackOut && trackOut.live ? 60 : 1800));
     res.json({
       success: true, callsign: cs,
       from: route ? route.from : null,
@@ -68,8 +80,9 @@ app.get('/api/route', async (req, res) => {
       fuelBurn: route ? (route.fuelBurn || null) : null,
       distance: route ? (route.distance ?? null) : null,
       historicalFlights: route ? (route.historicalFlights || []) : [],
-      // OpenSky 真实飞行轨迹（匿名亦可用）
+      // 真实飞行轨迹（OpenSky，或 CF 边缘不可达时的 FlightAware 兜底）
       track: trackOut,
+      trackSource: trackOut ? trackOut.source : null,
       trackError: trackErr || ((track && !track.ok) ? track.error : null),
       // OpenSky 历史航班（需凭据）
       openskyFlights: (osFlights && osFlights.ok) ? osFlights.flights : null,

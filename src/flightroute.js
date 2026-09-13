@@ -8,7 +8,8 @@ const BASE = 'https://flightaware.com/live/flight/';
 
 // 呼号 → 航线 结果缓存（FlightAware 有反爬/限流，务必缓存）
 const routeCache = new Map();
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时（静态航路信息）
+const LIVE_TTL = 5 * 60 * 1000;        // 5 分钟（含实时轨迹/当前位置时，避免位置过期）
 
 // 限流：相邻两次请求至少间隔 1200ms
 let lastReq = 0;
@@ -109,6 +110,65 @@ function extractAllFlights(bootstrap) {
 }
 
 /**
+ * 从 trackpollBootstrap 的航班组提取**实时轨迹 + 当前状态**（FlightAware）。
+ *
+ * 背景：OpenSky 在 Cloudflare 边缘不可达（522），但其轨迹能力可由 FlightAware 替代
+ * —— 页面内嵌 JSON 已含完整 track（从起飞到当前），无需额外请求。
+ * 字段单位：alt 为 100 英尺，gs 为节；coord 为 [lon, lat]。
+ *
+ * 输出与 OpenSky track 对齐，前端可无差别绘制：
+ *   points: [lat, lon, altFt, heading, onGround, time][]
+ */
+function extractLiveTrack(bootstrap) {
+  if (!bootstrap?.flights) return null;
+
+  // 多个航班组时，取轨迹点最多的那个（即实际执飞/最近一段）
+  let best = null;
+  for (const g of Object.values(bootstrap.flights)) {
+    const tk = Array.isArray(g?.track) ? g.track : null;
+    if (!tk || tk.length < 2) continue;
+    if (!best || tk.length > best.tk.length) best = { g, tk };
+  }
+  if (!best) return null;
+
+  const { g, tk } = best;
+  const pts = [];
+  for (const p of tk) {
+    const c = p && p.coord;
+    if (!Array.isArray(c) || c.length !== 2) continue;
+    const lon = Number(c[0]), lat = Number(c[1]);
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    // FlightAware 的 alt 单位是 100 英尺；缺失时为 null
+    const altFt = (p.alt == null || isNaN(Number(p.alt))) ? null : Math.round(Number(p.alt) * 100);
+    pts.push([lat, lon, altFt, null, altFt != null && altFt <= 100, p.timestamp || null]);
+  }
+  if (pts.length < 2) return null;
+
+  const last = pts[pts.length - 1];
+  const status = g.flightStatus || '';
+  return {
+    source: 'FlightAware',
+    callsign: String(g.ident || g.displayIdent || '').trim(),
+    startTime: pts[0][5],
+    endTime: last[5],
+    pointCount: pts.length,
+    points: pts,
+    // 当前状态（轨迹末点即最新位置）
+    live: {
+      latitude: last[0],
+      longitude: last[1],
+      altitudeFt: last[2],
+      groundSpeedKnots: g.groundspeed ?? null,
+      heading: g.heading ?? null,
+      status,
+      altitudeChange: g.altitudeChange || '',
+      onGround: status === 'arrived' || last[4],
+      time: g.timestamp || last[5],
+    },
+  };
+}
+
+/**
  * 查询某呼号的执飞航线（含 filed route / 航路点序列 / 飞行计划）
  * @param {string} callsign 如 AAR223 / CES586 / DAL284
  * @returns {Promise<object|null>}
@@ -128,7 +188,7 @@ export async function queryFlightRoute(callsign) {
 
   const now = Date.now();
   const hit = routeCache.get(cs);
-  if (hit && now - hit.t < CACHE_TTL) return hit.data;
+  if (hit && now - hit.t < (hit.ttl || CACHE_TTL)) return hit.data;
 
   await throttle();
   lastReq = Date.now();
@@ -188,8 +248,11 @@ export async function queryFlightRoute(callsign) {
       distance:      fp.directDistance ?? null, // 直飞距离 (nm)
       // 从同一页面提取全部历史航班（含 from/to/时间/route，可做兜底补全）
       historicalFlights: extractAllFlights(bootstrap),
+      // 实时轨迹 + 当前状态（OpenSky 在 CF 边缘不可达时的替代源）
+      liveTrack: extractLiveTrack(bootstrap),
     };
-    routeCache.set(cs, { t: Date.now(), data });
+    // 含实时轨迹时缩短缓存，避免"实时位置"过期；纯历史信息仍长缓存
+    routeCache.set(cs, { t: Date.now(), data, ttl: data.liveTrack ? LIVE_TTL : CACHE_TTL });
     return data;
   }
 

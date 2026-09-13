@@ -279,10 +279,11 @@
     const f = data.from || {}, t = data.to || {};
     const fLL = f.coord ? [f.coord.lat, f.coord.lon] : null;
     const tLL = t.coord ? [t.coord.lat, t.coord.lon] : null;
-    // OpenSky 真实飞行轨迹点（可能为空）
+    // 真实飞行轨迹点（OpenSky 或 FlightAware，可能为空）
     const trackPts = (data.track && Array.isArray(data.track.points) && data.track.points.length > 1)
       ? data.track.points.map((p) => [p[0], p[1]])
       : null;
+    const trackSrc = (data.track && data.track.source) || 'OpenSky';
 
     // 没有机场坐标但有真实轨迹时：只绘制轨迹
     if ((!fLL || !tLL) && trackPts) {
@@ -296,7 +297,7 @@
       dot(uw[0], '轨迹起点', '#15803d');
       dot(uw[uw.length - 1], '轨迹终点', '#dc2626');
       map.fitBounds(L.latLngBounds(uw), { padding: [50, 50], maxZoom: 9 });
-      bodyEl.innerHTML = '<div class="tip">🟢 已绘制 OpenSky <b>真实飞行轨迹</b>（'
+      bodyEl.innerHTML = '<div class="tip">🟢 已绘制 ' + esc(trackSrc) + ' <b>真实飞行轨迹</b>（'
         + trackPts.length + ' 点，原始 ' + (data.track.pointCount || trackPts.length) + ' 点）。'
         + '该航班无起降机场/航路数据。</div>';
       return;
@@ -429,8 +430,17 @@
       html += '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
     }
     if (trackFrame) {
-      html += '<div class="tip">🟢 绿线为 OpenSky <b>真实飞行轨迹</b>（'
-        + trackFrame.length + ' 点，原始 ' + (data.track.pointCount || trackFrame.length) + ' 点）。</div>';
+      // 轨迹末点即最新位置（FlightAware 来源时附带当前高度/速度/航向）
+      const lv = data.track && data.track.live;
+      const liveTxt = lv
+        ? '　当前 '
+          + (lv.altitudeFt != null ? Math.round(lv.altitudeFt) + ' ft' : '–')
+          + '　' + (lv.groundSpeedKnots != null ? Math.round(lv.groundSpeedKnots) + ' kt' : '')
+          + (lv.heading != null ? '　航向 ' + Math.round(lv.heading) + '°' : '')
+          + (lv.status ? '　' + esc(lv.status) : '')
+        : '';
+      html += '<div class="tip">🟢 绿线为 ' + esc(trackSrc) + ' <b>真实飞行轨迹</b>（'
+        + trackFrame.length + ' 点，原始 ' + (data.track.pointCount || trackFrame.length) + ' 点）。' + liveTxt + '</div>';
     } else if (data.trackError) {
       html += '<div class="tip">轨迹：' + esc(data.trackError) + '</div>';
     }

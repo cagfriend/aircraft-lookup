@@ -83,9 +83,21 @@ export default {
           icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
           icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
         ]);
+        // 真实轨迹：优先 OpenSky；CF 边缘访问 OpenSky 为 522 不可达，
+        // 此时用同一页面已抓到的 FlightAware 实时轨迹兜底（零额外请求）。
+        const faLive = (route && route.liveTrack) ? route.liveTrack : null;
         const trackOut = (track && track.ok)
-          ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
-          : null;
+          ? {
+              callsign: track.callsign, startTime: track.startTime, endTime: track.endTime,
+              pointCount: track.pointCount, points: track.points, source: 'OpenSky',
+            }
+          : (faLive && faLive.points && faLive.points.length > 1)
+            ? {
+                callsign: faLive.callsign, startTime: faLive.startTime, endTime: faLive.endTime,
+                pointCount: faLive.pointCount, points: faLive.points,
+                source: faLive.source, live: faLive.live,
+              }
+            : null;
         // 诊断信息：Cloudflare 机房（便于排查"某设备/地区失败"这类问题）
         const colo = (request.cf && request.cf.colo) || '';
         // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
@@ -94,6 +106,7 @@ export default {
         }
         return json({
           success: true, callsign: cs, colo,
+          trackSource: trackOut ? trackOut.source : null,
           from: route ? route.from : null,
           to: route ? route.to : null,
           icaoFrom: route ? route.icaoFrom : '',
@@ -115,13 +128,6 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
-    }
-
-    // /api/diag（临时诊断：从 CF 边缘实测候选数据源可达性；排查完即删）
-    if (path === '/api/diag') {
-      const hex = String(url.searchParams.get('hex') || '3c4b26').trim().toLowerCase();
-      const { runDiag } = await import('./diag.js');
-      return json({ colo: (request.cf && request.cf.colo) || '', hex, results: await runDiag(hex) });
     }
 
     // /api/fix（在线补充航路点坐标，需 OPENNAV_TOKEN）
