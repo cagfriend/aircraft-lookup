@@ -15,13 +15,14 @@ Node.js + Express 后端聚合多个公开数据源，前端原生 HTML/CSS/JS�
 - **最近机场匹配**：当数据源未给出起降机场时，用记录的经纬度反查**最近机场**（基于 OurAirports 全球 9000+ 商业机场数据库，本地球面距离计算）
 - **注册信息**：机身序号 (C/N)、注册国、ICAO24（Mode-S）、所有者、注册状态、适航日期
 - **实时状态**：ADS-B 位置数据（经纬度、高度、地速、航向、应答机、国家与地区）；不在空中时显示最近记录坐标及最近机场
+  - ⚠️ 线上 OpenSky 从 Cloudflare 边缘**不可达**（HTTP 522，且第三方中转同样 522，属链路问题），因此线上会**自动降级到 FlightAware**：主查询在后台异步获取实时位置，前端轮询 `/api/live` 自动填入（不拖慢主查询、无需点击）
 - **飞机照片**：planespotters.net 提供，主图加载失败自动降级到缩略图
 
 ### 交互功能
-- **主题定时切换**：默认按**北京时间(GMT+8)**自动切换——`06:00-19:00` 浅色（白色），其余时段深色；右上角 🌙/☀️ 仍可手动切换（手动选择在 localStorage 中记忆）
-- **深色 / 浅色双主题**：右上角手动切换，偏好保存在 localStorage
+- **主题定时切换**：严格按**北京时间(GMT+8)**——`06:00-19:00` 浅色，其余时段深色。**不读取也不写入 localStorage**：刷新/重开一律按当前时间决定；右上角 🌙/☀️ 只临时覆盖当前页面，重载后恢复时间规则（localStorage 仅用于搜索历史）
 - **搜索历史**：自动保存最近 5 条搜索（含缩略图、注册号、机型、航司、年份），点击可快速复查
 - **按需查询起降机场**：缺失起降机场的记录行显示"🔍 查起降机场"按钮，点击才联网查询 FlightAware（不拖慢主查询）
+- **航路地图**：点击航段展开页内地图卡片——有航路则画航路点连线，**绿线为真实飞行轨迹**（OpenSky，或线上降级用 FlightAware），无航路时按大圆示意；瓦片源自动降级（高德 → OSM → CARTO）
 - **缓存刷新按钮**：结果页右上角 🔄，绕过 30 分钟缓存强制刷新
 - **容错输入**：注册号可以不写连字符，自动尝试多种标准写法（`B7973` ↔ `B-7973`、`GEUYR` ↔ `G-EUYR`）
 
@@ -67,8 +68,8 @@ npm run dev
 |--------|------|------|
 | [airport-data.com](https://airport-data.com) | 机型号、机龄、出厂号、发动机、所有者、ICAO24、执飞航线 | 全局飞机数据库，核心来源 |
 | [planespotters.net](https://www.planespotters.net/photo/api) | 飞机照片 | 公共照片接口，需 Referer + 联系方式 UA |
-| [OpenSky Network](https://opensky-network.org) | ADS-B 实时位置/状态 | 按 ICAO24 查询，中国境内覆盖较弱 |
-| [FlightAware](https://flightaware.com) | 按需补全起降机场 | 需要登录，仅注册号指向的航班场景 |
+| [OpenSky Network](https://opensky-network.org) | ADS-B 实时位置/状态 + 真实飞行轨迹 | 按 ICAO24 查询；**本地/自建环境可用，但从 Cloudflare 边缘访问为 HTTP 522（不可达）** |
+| [FlightAware](https://flightaware.com) | 按需补全起降机场 + **实时轨迹/当前位置**（CF 上的 OpenSky 替代源） | 页面内嵌 JSON 已含起飞至今的完整轨迹，无需额外请求；有反爬，已做节流 + 缓存 |
 | [OurAirports](https://ourairports.com) | 最近机场匹配 | 9057 个商业机场坐标，本地计算 |
 
 服务端抓取外部数据时强制 IPv4、跟随重定向、自定义 UA，以规避解析超时与反爬。
@@ -111,9 +112,31 @@ curl "https://searchplane.site/api/query?reg=N784AN"
 }
 ```
 
-### `GET /api/route?callsign=<呼号>`
+### `GET /api/route?callsign=<呼号>[&icao24=<hex>]`
 
-按呼号补全起降机场（用户点击"查起降机场"按钮时调用）。
+按呼号补全起降机场 + 航路 + **真实飞行轨迹**（点击航段打开地图卡片时调用）。
+
+- `track`：真实轨迹，`points` 为 `[lat, lon, altFt, heading, onGround, time]`；`source` 标明来源（`OpenSky` 或 `FlightAware`），`live` 为轨迹末点即当前状态（高度/速度/航向/状态）
+- `trackSource`：轨迹来源；`trackError`：首选源（OpenSky）的失败原因，不掩盖问题
+- 降级链：OpenSky 可用则用 OpenSky，否则用 FlightAware（同一页面的内嵌 JSON，零额外请求）
+- `historicalFlights`：FlightAware 的历史航班（约 20+ 条，目前仅返回、前端未展示）
+
+```bash
+curl "https://searchplane.site/api/route?callsign=UAL286&icao24=a31a57"
+```
+
+### `GET /api/live?callsign=<呼号>`
+
+**实时位置轮询**接口：只读服务端内存缓存，**恒定快返回**，绝不发起上游请求。
+
+- 已就绪：`{ "success": true, "pending": false, "source": "FlightAware", "live": { "airborne": true, "latitude": ..., "longitude": ..., "altitudeBaro": 41000, "groundSpeedKnots": 540, "heading": 118, "near": { "iata": "NRN", "distKm": 6 } } }`
+- 尚未就绪：`{ "success": true, "pending": true }`（前端 5 秒后重试，最多 8 次）
+
+数据由 `/api/query` 在响应后用后台任务（Cloudflare `ctx.waitUntil`）预热，因此**不影响主查询耗时**。
+
+### `GET /api/fix?ident=<航路点>`
+
+在线补充航路点坐标（需配置 `OPENNAV_TOKEN`，未配置则返回 404）。非美国航路点缺失时前端按大圆示意兜底。
 
 ### `GET /api/health`
 
@@ -135,14 +158,18 @@ aircraft-lookup/
 │  ├─ airports.js       # 最近机场匹配（Haversine 球面距离）
 │  ├─ airports.data.js  # OurAirports 9057 个商业机场（导出自 airports.json）
 │  ├─ planespotters.js  # planespotters 照片
-│  ├─ opensky.js        # OpenSky ADS-B 实时状态
-│  ├─ flightroute.js    # FlightAware 按呼号补全起降机场（限流 + 缓存）
+│  ├─ opensky.js        # OpenSky ADS-B 实时状态 + 真实轨迹（CF 边缘不可达，见「局限」）
+│  ├─ flightroute.js    # FlightAware：起降机场/航路 + 实时轨迹与当前位置（限流 + 缓存）
+│  ├─ fixlookup.js      # OpenNav 在线补充航路点（可选，需 OPENNAV_TOKEN）
 │  ├─ fetch.js          # HTTP 客户端（Node https / Cloudflare fetch 双环境）
 │  └─ register.js       # 注册号规范化与连字符变体
 ├─ public/
 │  ├─ index.html        # 页面结构
 │  ├─ style.css         # 深色 + 浅色双主题 CSS 变量体系
-│  └─ app.js            # 前端逻辑（查询、渲染、主题定时切换、搜索历史、刷新）
+│  ├─ app.js            # 前端逻辑（查询、渲染、主题定时切换、搜索历史、实时位置轮询）
+│  ├─ route-map.js      # 航路地图卡片（Leaflet：航路点解析、真实轨迹、瓦片降级）
+│  ├─ data/fixes.data.js# 全球航路点库（约 3.3MB，懒加载；11.5 万 ident）
+│  └─ vendor/leaflet/   # 本地托管的 Leaflet（不依赖外部 CDN）
 ├─ start.bat / start.sh # 一键启动
 ├─ wrangler.jsonc       # Cloudflare Worker 配置（main + assets）
 ├─ package.json
@@ -172,10 +199,12 @@ npm start   # http://127.0.0.1:3000
 - **数据可得性**：机型/机龄/注册信息依赖 airport-data.com 是否收录；未收录的注册号返回"未找到"。
 - **复用注册号**：历史上被多个飞机使用过的注册号（如部分 B-XXX），airport-data 会展示多个历史记录；项目已按**标题中的构造号 (C/N)** 匹配当前那架，避免发动机/座位数等字段被旧飞机覆盖。
 - **注册国兜底**：所有者地址缺失/解析失败时，按**注册号前缀**推断国家/地区（如 `B-`=中国、`N`=美国、`JA`=日本、`HL`=韩国、`9M`=马来西亚等）。
-- **OpenSky 覆盖**：ADS-B 实时数据在中国境内覆盖较弱，此时用最近航班记录坐标 + 最近机场作为降级方案。
+- **OpenSky 从 Cloudflare 不可达（重要）**：实测线上 Worker 访问 `opensky-network.org` 返回 **HTTP 522**（约 19.6s 超时），根因是 **"Cloudflare 网络 → OpenSky" 这条链路本身不通**——连第三方中转（同样架在 Cloudflare 上）代取 OpenSky 时也是 522。因此线上已改为用 **FlightAware** 提供实时轨迹与当前位置；本地 Node 直连 OpenSky 正常，故本地会优先用 OpenSky。其他免费 ADS-B 源实测也不可用：`api.adsb.lol` 429（按 IP 限流）、`opendata.adsb.fi` 403、`api.airplanes.live` 403。
+- **实时位置与缓存**：含实时轨迹的结果缓存仅保留 5 分钟（静态航路信息仍 6 小时），本地接口 `Cache-Control` 在有实时数据时降到 60 秒，避免浏览器缓存出旧位置。
+- **航路卡片偶发失败**：FlightAware 偶发抖动会导致某次 `/api/route` 返回"未查到该航班信息"（实测约 1/8），**重试一次即可成功**（失败不会被缓存）。
 - **航线缺失**：部分航班起降机场在数据源未匹配，此时显示记录坐标及最近机场，或点"查起降机场"按钮联网补全。
 - **照片可用性**：planespotters 图片 CDN 偶发不可达，前端自动降级到缩略图，均失败显示"照片加载失败"。
-- **主题定时**：默认按北京时间 6-19 点浅色；页面需在对应时段打开才自动切换（刷新后生效），手动点击会覆盖。
+- **主题定时**：默认按北京时间 6-19 点浅色；**页面加载时按当前时间决定**（不读 localStorage），手动点击只临时覆盖当前页面，刷新即恢复时间规则。
 
 仅用于学习演示。请遵守各数据源的使用条款。
 
