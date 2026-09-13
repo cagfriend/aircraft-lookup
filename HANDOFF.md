@@ -42,9 +42,39 @@
   - `queryOpenSkyFlights(icao24, {hours})` — **历史航班**（**需凭据**，默认 24h 窗口 = 4 credits）
 - **配额**：匿名 400/天；注册 4000/天；**states/tracks/flights 三者配额独立**。`/states` 按包围框 1–4 credits；`/tracks`、`/flights` 按跨越日分区 4–30+ credits
 - ⚠️ **重要实测结论（2026-09）**：**OpenSky 从 Cloudflare Worker 访问不通** —— `opensky-network.org` 的 states/tracks/auth 全部超时，25s 时返回 **HTTP 522**（Cloudflare 边缘连不上 OpenSky 源站；OpenSky 自己就在 Cloudflare 后面）。因此线上"实时位置""真实轨迹""历史航班"都拿不到数据，只能降级。**本地 Node 直连正常**（轨迹实测 100+ 点）。已做的缓解：超时 15s→6s（`OPENSKY_TIMEOUT_MS` 可调）+ 失败熔断负缓存 5 分钟。
-  - 若将来要让线上也能用轨迹，需要换一个**对 Cloudflare 出口可达**的 ADS-B 源。实测：`api.adsb.lol` 可达但返回 429（限流）；`opendata.adsb.fi` 403（屏蔽数据中心 IP）；`api.adsbdb.com` 200 可用（但只有机型信息，无轨迹）。
+  - **完整可达性实测矩阵（2026-09，CF 边缘 colo=SEA/LHR 双机房一致）**：
+
+    | 目标 | CF 边缘 | 本机 |
+    |---|---|---|
+    | `api.adsbdb.com`（对照） | **200 / 124ms** | 200 |
+    | `example.com`（对照） | **200 / 8ms** | 200 |
+    | `opensky-network.org`（root 与 states） | **522（约 19.6s）** | 200 |
+    | `api.adsb.lol/v2/hex/…` | **429**（nginx；换浏览器 UA/Referer 仍 429，143ms 快速拒绝） | 200 |
+    | `api.adsb.lol/…/trace/` | **503**（其 trace 端点本机也 503，本身不稳） | 503 |
+    | `opendata.adsb.fi` | **403**（Cloudflare 拦截页） | 200 |
+    | `api.airplanes.live` | **403**（对方要求邮件申请） | 403 |
+    | `r.jina.ai` 中转 | 429（按 IP 限流） | — |
+    | `api.allorigins.win` 中转 | 500（约 19s） | — |
+    | `api.codetabs.com` 中转 | **522** | — |
+    | `corsproxy.io` 中转 | 403（需 API key） | — |
+
+  - **结论**：CF 边缘自身出网完全正常（对照 200），但**“Cloudflare 网络 → OpenSky”这一跳整体不通**。关键证据：连第三方中转 `codetabs`（同样架在 Cloudflare 上）代取 OpenSky 时也返回 **522** —— 说明断点在 CF→OpenSky，不是我们的 Worker 代码或出口 IP 策略。因此“换成另一个免费 ADS-B 源”这条路基本被堵死（可用的都被 CF 拦截或按 IP 限流）。
+  - ✅ **已采用的解法：改用 FlightAware 作为轨迹来源**（详见下方“实时轨迹兜底”），因为 FlightAware 从 CF 是通的（`/api/route` 一直在用它取航路）。**零新增基建、零额外请求**——轨迹就在我们已经抓取的那个页面的内嵌 JSON 里。
   - 注意：沙箱内 **OpenSky 直连可用，走 clash 代理反而不可用**。
-- **前端**：`/api/route?callsign=X&icao24=Y` 并行取 FlightAware + OpenSky。地图上**绿线 = OpenSky 真实轨迹**，蓝线 = filed route 航路点连线，灰虚线 = 大圆兜底。`app.js` 在 render 时把当前机 ICAO24 放到 `window.__aircraftIcao24`
+- **前端**：`/api/route?callsign=X&icao24=Y` 并行取 FlightAware + OpenSky。地图上**绿线 = 真实轨迹**（来源见 `track.source`），蓝线 = filed route 航路点连线，灰虚线 = 大圆兜底。`app.js` 在 render 时把当前机 ICAO24 放到 `window.__aircraftIcao24`
+
+### 实时轨迹兜底（FlightAware）—— 2026-09 新增
+
+- **来源**：`flightroute.js` 的 `extractLiveTrack(bootstrap)`，从**同一个** `trackpollBootstrap` 里取 `flights[*].track`（该组对象还带 `heading`/`altitude`/`groundspeed`/`flightStatus`/`altitudeChange`/`timestamp`）。不新增任何网络请求。
+- **单位换算（易错）**：`coord` 是 `[lon, lat]`（与 OpenSky 相反，已转成 `[lat, lon]`）；`alt` 单位是 **100 英尺**（×100 得 ft）；`gs` 单位是节。逐点无航向，故每点 heading 置 `null`。
+- **输出结构**与 OpenSky track **完全对齐** `points: [lat, lon, altFt, heading, onGround, time][]`，因此前端绘制逻辑无需改动；另加 `live`（末点即当前位置 + 速度/航向/状态）。
+- **降级链（`worker.js` 与 `server.js` 双入口必须一致）**：OpenSky 可用 → 用 OpenSky；否则用 FlightAware。响应加 `trackSource` 标明来源；`trackError` 仍保留 OpenSky 的失败原因，不掩盖问题。
+- **缓存**：含实时轨迹时 `flightroute.js` 的 TTL 从 6h 缩短到 **5 分钟**（`LIVE_TTL`）；本地 `server.js` 的 `Cache-Control` 在有实时数据时从 1800s 降到 **60s**（浏览器缓存旧位置曾是“手机端未查到航班”的诱因）。
+- **线上实测（colo=SEA）**：
+  - DLH521（MEX→MUC）**915 点**：墨西哥城起飞 → 北海上方 FL410/572kt/航向 118，`trackSource=FlightAware`
+  - UAL286（ICN→EWR）**499 点**：经度 -179.92~179.63，**跨日界线 1 次**（前端 `unwrapLng` 展开后最大相邻跳变 1.45°，绘制正确）
+  - KAL259（ANC→ORD）**10 点**（刚起飞 3400ft）：短轨迹同样可用
+  - 响应体积约 47KB（915 点），可接受；OpenSky 熔断生效时 `trackError` 显示“OpenSky 暂时不可达（熔断中）”
 - **地图实现**：Leaflet **本地托管**（`public/vendor/leaflet`）；瓦片源三级自动降级：高德 → OSM → CARTO（手机端曾因高德不可达导致底图空白）。
 - **跨日界线**：`unwrapLng()` 展开经度，`chainFrame`/`alignToFrame()` 让机场+航路点+折线统一经度框架。**否则跨太平洋会画成横穿地图的直线，或丢掉终点。**
 
@@ -69,13 +99,17 @@
 ## 部署注意
 
 - 推送到 GitHub main → Cloudflare **自动部署**（autoDeploy 已开），约 **45-90 秒**生效；前端资产需 **Ctrl+F5** 强刷。
-- 本地推 GitHub 需要 VPN(clash 代理 127.0.0.1:7897)，git 已配 proxy；**代理时断时续，push 需重试循环**。
+- ⚠️ **推送不再需要 VPN（2026-09 实测变更）**：GitHub 现已可**直连**（`curl https://github.com` 1.2s 返回 200），而 clash 代理 `127.0.0.1:7897` 当时是**死的**（`curl -x` 连接失败）。git 里仍配着 `http.proxy=http://127.0.0.1:7897`，所以默认 `git push` 会因代理不通而失败 —— **用 `git -c http.proxy= -c https.proxy= push origin main` 绕过代理即可成功**。若哪天直连又不通，再回头试代理。
+- 小坑：`git push ... | tail -3` 的退出码是 `tail` 的，**永远为 0**，会把失败当成功（曾据此误判推送成功）。要判断结果得用 `PIPESTATUS` 或直接看输出。
 - 若域名/DNS 有问题，域名在腾讯云买，NS 指向 Cloudflare（michelle/kenneth.ns.cloudflare.com）。
 - 3.3MB 的 `fixes.data.js` 部署没问题（上限 25MiB）；历史上部署失败的真凶是上面第 8 条。
 
 ## 待办 / 开放问题
 
-- ⚠️ **P1 线上 OpenSky 不可达（未解决）**：CF Worker 访问 OpenSky 全 522 → 线上"实时位置/真实轨迹/历史航班"均降级。本地 Node 正常。解决方向：① 自建中转（本地/VPS 代理）② 换对 CF 出口可达的 ADS-B 源 ③ 接受现状。
+- ✅ **P1 线上轨迹已解决（2026-09）**：OpenSky 从 CF 边缘**永久不可达**（522，且第三方 CF 中转同样 522，属链路问题），已改用 **FlightAware 内嵌 track 兜底**，线上绿线真实轨迹恢复（实测 915 点 + 当前位置），零新增基建。详见上方“实时轨迹兜底”。
+- ⚠️ **仍未解决：主查询页的“实时位置”面板**。`/api/query` 的 `live` 线上仍是 `{airborne:false, note:'The operation was aborted'}`，只回退展示 airport-data 的 `lastSeen`（最近航班记录坐标，非实时）。**轨迹卡片（点航段打开地图）里已能看到实时位置**。
+  - 若要让面板也实时：**推荐懒加载** —— 不要在 `/api/query` 里加 FlightAware 抓取（页面 7-26s，会把主查询拖慢一倍），而是在前端“已起飞但无位置”时给个按钮，点击后才走 `/api/route`。
+- ⚠️ **OpenSky 的“历史航班”`/api/route` → `openskyFlights` 线上同样不可用**（需凭据 + 且链路不通）。但 FlightAware 的 `historicalFlights`（约 23 条）是通的、且已返回，只是前端还没做 UI。
 - **待配置**：`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`（不配也能跑：实时+轨迹匿名可用，仅"历史航班"不可用；云端本就不可达）。`OPENNAV_TOKEN` 未配置 → 非美国航路点（南美等）仍走大圆示意。
 - **P0 待用户确认**：手机端曾报"未查到该航班信息"，判断为故障窗口 + 浏览器 30min 缓存所致（桌面读缓存、手机打源站）。已加 **CF 机房标识(colo)** 便于复查，等手机复测；若复测仍失败，看错误提示里的**机房号**。
 - **可选**：前端展示 `historicalFlights`（`/api/route` 已返回，实测 23 条，目前无 UI 消费）；主题"到点自动切换（无需刷新）"（当前刷新才生效）。
