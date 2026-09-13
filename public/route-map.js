@@ -525,7 +525,12 @@
       subEl.textContent = '';
       // 附上机房标识，便于排查"某设备/某地区失败"
       const coloTip = respColo ? '　<span style="opacity:.5">（机房 ' + esc(respColo) + '）</span>' : '';
-      bodyEl.innerHTML = '<span class="tip" style="color:var(--err)">' + esc(e.message) + '</span>' + coloTip;
+      // FlightAware 偶发抖动会导致取数失败（实测约 1/8，重试即可成功；失败不写缓存）。
+      // 复用 document 上的 .route-q-btn 委托：按钮带 data-callsign 即会自动重新打开本卡片。
+      bodyEl.innerHTML = '<span class="tip" style="color:var(--err)">' + esc(e.message) + '</span>' + coloTip
+        + '<div class="route-q-wrap" style="margin-top:10px">'
+        + '<button class="route-q-btn" type="button" data-callsign="' + esc(callsign) + '">🔄 重试</button>'
+        + '</div>';
     }
   }
 

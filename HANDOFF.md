@@ -95,7 +95,7 @@
   - 首次仍需要整页（token 只存在于页面里）；`Referer` 可能必需
   - 实现思路：`flightroute.js` 在整页抓取时顺带缓存 token → 新增 `refreshLiveTrack()` 走 trackpoll 更新缓存的 `liveTrack` → `/api/query` 预热时若有 token 用 refresh，否则整页
 
-  - ⚠️ **已知瞬时失败率 ≈ 1/8**：AAL2459 首次请求返回 `{success:false, error:'未查到该航班信息'}`，**同一呼号重查即成功**（FlightAware 抖动；失败结果不写入缓存）。前端目前会显示“未查到该航班信息”形成死路，**建议后续在卡片里加一个“重试”按钮**（尚未实现）。
+  - ⚠️ **已知瞬时失败率 ≈ 1/8**：AAL2459 首次请求返回 `{success:false, error:'未查到该航班信息'}`，**同一呼号重查即成功**（FlightAware 抖动；失败结果不写入缓存）。已在卡片错误态加入 **“🔄 重试”按钮**（复用 `document` 上已有的 `.route-q-btn` 委托，无需新增事件绑定）。已用假 DOM + 假 Leaflet 驱动真实 `route-map.js` 验证：错误态渲染出正确的按钮（含 `data-callsign`），点击确实触发新的 `/api/route` 请求（9 项断言全通过）。
 - **地图实现**：Leaflet **本地托管**（`public/vendor/leaflet`）；瓦片源三级自动降级：高德 → OSM → CARTO（手机端曾因高德不可达导致底图空白）。
 - **跨日界线**：`unwrapLng()` 展开经度，`chainFrame`/`alignToFrame()` 让机场+航路点+折线统一经度框架。**否则跨太平洋会画成横穿地图的直线，或丢掉终点。**
 
