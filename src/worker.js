@@ -117,6 +117,13 @@ export default {
       }
     }
 
+    // /api/diag（临时诊断：从 CF 边缘实测候选数据源可达性；排查完即删）
+    if (path === '/api/diag') {
+      const hex = String(url.searchParams.get('hex') || '3c4b26').trim().toLowerCase();
+      const { runDiag } = await import('./diag.js');
+      return json({ colo: (request.cf && request.cf.colo) || '', hex, results: await runDiag(hex) });
+    }
+
     // /api/fix（在线补充航路点坐标，需 OPENNAV_TOKEN）
     if (path === '/api/fix') {
       const ident = String(url.searchParams.get('ident') || '').trim().toUpperCase();
