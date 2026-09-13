@@ -86,12 +86,14 @@ export default {
         const trackOut = (track && track.ok)
           ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
           : null;
+        // 诊断信息：Cloudflare 机房（便于排查"某设备/地区失败"这类问题）
+        const colo = (request.cf && request.cf.colo) || '';
         // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
         if (!route && !trackOut) {
-          return json({ success: false, error: '未查到该航班信息' }, 404);
+          return json({ success: false, error: '未查到该航班信息', colo }, 404);
         }
         return json({
-          success: true, callsign: cs,
+          success: true, callsign: cs, colo,
           from: route ? route.from : null,
           to: route ? route.to : null,
           icaoFrom: route ? route.icaoFrom : '',
