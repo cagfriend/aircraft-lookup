@@ -367,9 +367,6 @@
     const boundPts = [fFrame, tFrame];
 
     // 4) 有真实坐标点 → 实线路径；否则大圆虚线（大圆插值后统一经度展开）
-    //    注意：已有真实飞行轨迹时，这些"近似连线"与轨迹几乎重合、只会造成视觉干扰，
-    //    因此不再绘制，仅保留航路点位置（用户要求）以及轨迹本身。
-    const haveTrack = !!trackPts;
     let hasReal = false;
     let viewPts = null; // 经度展开后的路径点，用于最后 fitBounds
     if (orderedPts.length) {
@@ -378,7 +375,7 @@
         line.push.apply(line, gcArc(chainRaw[i], chainRaw[i + 1], 24));
       }
       viewPts = unwrapLng(line);
-      if (!haveTrack) L.polyline(viewPts, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
+      L.polyline(viewPts, { color: '#2f9bff', weight: 3, opacity: .9 }).addTo(routeLayer);
       hasReal = true;
       orderedPts.forEach((p, idx) => {
         const c = chainFrame[idx + 1]; // 同一经度框架，保证与路径对齐
@@ -391,7 +388,7 @@
       });
     } else {
       viewPts = unwrapLng(gcArc(fLL, tLL, 48));
-      if (!haveTrack) L.polyline(viewPts, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
+      L.polyline(viewPts, { color: '#8494a6', weight: 2, dashArray: '6 6', opacity: .9 }).addTo(routeLayer);
     }
 
     // 5) 仍无法解析的名称航路点 → 沿大圆按序示意（同样用展开后的经度框架）
@@ -445,8 +442,7 @@
         const tip = c.kind === 'coord' ? (' title="' + esc(c.label) + '  =  ' + esc(c.lat.toFixed(2)) + ', ' + esc(c.lon.toFixed(2)) + '"') : '';
         return '<span class="' + cls + '"' + tip + '>' + esc(c.label) + '</span>';
       }).join('') + '</div>';
-      if (hasReal) html += '<div class="tip">🔵 蓝色点为航路点（真实位置）；🟡 空心点为未收录航路点的示意。'
-        + (haveTrack ? '已有真实飞行轨迹，故不再叠加航路示意连线。' : '') + '</div>';
+      if (hasReal) html += '<div class="tip">🔵 蓝色点为航路点（真实位置）；🟡 空心点为未收录航路点的示意。</div>';
       else if (unknownFixes.length) html += '<div class="tip">🟡 航路点暂无坐标数据，按航路顺序沿大圆航线示意分布。</div>';
       if (droppedFixes.length) {
         html += '<div class="tip">⚠️ 已过滤 ' + droppedFixes.length + ' 个同名但位置明显偏离的航路点：'
@@ -454,9 +450,7 @@
           + (droppedFixes.length > 8 ? ' 等' : '') + '</div>';
       }
     } else {
-      html += haveTrack
-        ? '<div class="tip">该航班暂无具体航路（filed route）数据，已按真实飞行轨迹显示。</div>'
-        : '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
+      html += '<div class="tip">该航班暂无具体航路（filed route）数据，已按大圆航线示意连接起降机场。</div>';
     }
     if (trackFrame) {
       // 轨迹末点即最新位置（FlightAware 来源时附带当前高度/速度/航向）
