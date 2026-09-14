@@ -102,7 +102,6 @@ $('#refreshBtn').addEventListener('click', () => {
 
 // ===== 查询 =====
 const NEAR_KM = 10;
-let lastInlineCallsign = '';   // 已内嵌渲染过的呼号，避免重复请求
 
 const searchForm = $('#searchForm');
 const regInput = $('#regInput');
@@ -221,12 +220,7 @@ function render(d) {
   $('#icaoValue').textContent = a.icao24 ? `ICAO24: ${a.icao24.toUpperCase()}` : '';
 
   renderCurrentRoute(d.currentRoute, a);
-  stopLivePoll();
-  livePollCallsign = null;
   renderLive(d.live);
-  // 注：曾在此调用 maybePollLive(d) 轮询 /api/live 自动填充实时位置。
-  // FlightAware 现已对非浏览器客户端返回反爬质询（403）、服务端不再后台预热，
-  // 该轮询必然拿不到数据，故停用（函数保留，数据源恢复后可重新启用）。
   renderRoutes(d.routes);
   renderTech(a);
   renderSources(d.sources);
@@ -240,8 +234,6 @@ function renderCurrentRoute(cr, a) {
   if (!cr || (!cr.from.code && !cr.to.code && !cr.callsign && !cr.near)) {
     box.innerHTML = '<div style="color:var(--muted)">暂无近期执飞航线信息</div>';
     note.textContent = '';
-    lastInlineCallsign = '';
-    if (typeof window.clearInlineRoute === 'function') window.clearInlineRoute();
     return;
   }
   let routeHtml = '';
@@ -274,56 +266,6 @@ function renderCurrentRoute(cr, a) {
       ${nearMeta}
     </div>`;
   note.textContent = '';
-
-  // 抓到"当前执飞航班"的航路后，直接在卡片里内嵌显示地图与航路（无需点击按钮）。
-  // 用 peek 只读服务端已有缓存：不触发上游抓取（FlightAware 已上反爬质询），
-  // 没有缓存时保持隐藏，用户可点"查看航路地图"按钮手动获取。
-  if (cr.callsign && typeof window.renderInlineRoute === 'function') {
-    if (cr.callsign !== lastInlineCallsign) {
-      lastInlineCallsign = cr.callsign;
-      window.renderInlineRoute(cr.callsign, { icao24: window.__aircraftIcao24, peek: true });
-    }
-  } else {
-    lastInlineCallsign = '';
-    if (typeof window.clearInlineRoute === 'function') window.clearInlineRoute();
-  }
-}
-
-// 实时位置轮询：OpenSky 在 CF 边缘不可达，后端会用后台任务预热 FlightAware，
-// 这里定时拉取 /api/live（只读缓存、恒定快返回）。填入结果后自动停止。
-let livePollTimer = null;
-let livePollCallsign = null;   // 当前轮询对应的呼号（新查询会使其失效）
-function stopLivePoll() {
-  if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
-}
-function maybePollLive(d) {
-  stopLivePoll();
-  const live = d.live || {};
-  const cs = d.currentRoute && d.currentRoute.callsign;
-  if (live.airborne || !cs) return;
-  livePollCallsign = cs;
-  const note = document.getElementById('livePollNote');
-  if (note) note.textContent = '正在后台获取实时位置…';
-  let tries = 0;
-  const MAX_TRIES = 8;      // 8 × 5s ≈ 40s，覆盖 FlightAware 抓取的 7-26s
-  livePollTimer = setInterval(async () => {
-    tries += 1;
-    try {
-      const r = await fetch('/api/live?callsign=' + encodeURIComponent(cs));
-      const j = await r.json();
-      if (cs !== livePollCallsign) { stopLivePoll(); return; }   // 已发起新查询，丢弃迟到响应
-      if (j && j.success && !j.pending && j.live) {
-        stopLivePoll();
-        renderLive(j.live);
-        return;
-      }
-    } catch (e) { /* 忽略单次失败，继续重试 */ }
-    if (tries >= MAX_TRIES) {
-      stopLivePoll();
-      const n = document.getElementById('livePollNote');
-      if (n) n.textContent = '';
-    }
-  }, 5000);
 }
 
 function renderLive(live) {
@@ -346,8 +288,7 @@ function renderLive(live) {
         <span>航向：<b>${esc(ls.heading || '—')}</b></span>
       </div>`;
     }
-    box.innerHTML = `<span class="badge-status off">未在空中</span><div class="route-note">${esc(n)}</div>`
-      + `<div class="route-note" id="livePollNote" style="opacity:.75"></div>${lastSeenHtml}`;
+    box.innerHTML = `<span class="badge-status off">未在空中</span><div class="route-note">${esc(n)}</div>${lastSeenHtml}`;
     return;
   }
   const gps = (live.latitude != null && live.longitude != null)

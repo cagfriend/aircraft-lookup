@@ -8,29 +8,10 @@ const BASE = 'https://flightaware.com/live/flight/';
 
 // 呼号 → 航线 结果缓存（FlightAware 有反爬/限流，务必缓存）
 const routeCache = new Map();
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时（静态航路信息）
-const LIVE_TTL = 5 * 60 * 1000;        // 5 分钟（含实时轨迹/当前位置时，避免位置过期）
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时
 
 // 限流：相邻两次请求至少间隔 1200ms
 let lastReq = 0;
-
-// 反爬熔断：2026-09 起 FlightAware 对非浏览器客户端返回 Cloudflare 托管质询（HTTP 403，
-// 响应头 Cf-Mitigated: challenge），整个站点（含 /ajax/*）都一样。既然对方明确拒绝自动化访问，
-// 我们既不绕过，也不持续冲撞：命中一次 403 就熔断一段时间，期间直接返回不可用。
-const FA_DOWN_MS = 30 * 60 * 1000; // 熔断 30 分钟
-let faDownUntil = 0;
-let faDownReason = '';
-
-function faIsDown() { return Date.now() < faDownUntil; }
-function faMarkDown(reason) {
-  faDownUntil = Date.now() + FA_DOWN_MS;
-  faDownReason = reason || '数据源返回 403（Cloudflare 人机质询）';
-}
-
-/** 航路数据源当前是否可用（供 API 区分"查不到"与"源不可用"） */
-export function flightRouteStatus() {
-  return { available: !faIsDown(), reason: faDownReason, until: faDownUntil || null };
-}
 function throttle() {
   const wait = lastReq + 1200 - Date.now();
   if (wait > 0) return new Promise((r) => setTimeout(r, wait));
@@ -128,90 +109,6 @@ function extractAllFlights(bootstrap) {
 }
 
 /**
- * 从 trackpollBootstrap 的航班组提取**实时轨迹 + 当前状态**（FlightAware）。
- *
- * 背景：OpenSky 在 Cloudflare 边缘不可达（522），但其轨迹能力可由 FlightAware 替代
- * —— 页面内嵌 JSON 已含完整 track（从起飞到当前），无需额外请求。
- * 字段单位：alt 为 100 英尺，gs 为节；coord 为 [lon, lat]。
- *
- * 输出与 OpenSky track 对齐，前端可无差别绘制：
- *   points: [lat, lon, altFt, heading, onGround, time][]
- */
-function extractLiveTrack(bootstrap) {
-  if (!bootstrap?.flights) return null;
-
-  // 多个航班组时，取轨迹点最多的那个（即实际执飞/最近一段）
-  let best = null;
-  for (const g of Object.values(bootstrap.flights)) {
-    const tk = Array.isArray(g?.track) ? g.track : null;
-    if (!tk || tk.length < 2) continue;
-    if (!best || tk.length > best.tk.length) best = { g, tk };
-  }
-  if (!best) return null;
-
-  const { g, tk } = best;
-  const pts = [];
-  for (const p of tk) {
-    const c = p && p.coord;
-    if (!Array.isArray(c) || c.length !== 2) continue;
-    const lon = Number(c[0]), lat = Number(c[1]);
-    if (!isFinite(lat) || !isFinite(lon)) continue;
-    // FlightAware 的 alt 单位是 100 英尺；缺失时为 null
-    const altFt = (p.alt == null || isNaN(Number(p.alt))) ? null : Math.round(Number(p.alt) * 100);
-    pts.push([lat, lon, altFt, null, altFt != null && altFt <= 100, p.timestamp || null]);
-  }
-  if (pts.length < 2) return null;
-
-  const last = pts[pts.length - 1];
-  const status = g.flightStatus || '';
-  return {
-    source: 'FlightAware',
-    callsign: String(g.ident || g.displayIdent || '').trim(),
-    startTime: pts[0][5],
-    endTime: last[5],
-    pointCount: pts.length,
-    points: pts,
-    // 当前状态（轨迹末点即最新位置）
-    live: {
-      latitude: last[0],
-      longitude: last[1],
-      altitudeFt: last[2],
-      groundSpeedKnots: g.groundspeed ?? null,
-      heading: g.heading ?? null,
-      status,
-      altitudeChange: g.altitudeChange || '',
-      onGround: status === 'arrived' || last[4],
-      time: g.timestamp || last[5],
-    },
-  };
-}
-
-/**
- * 只读缓存：取某呼号已缓存的整份航路数据（**绝不发起网络请求**）。
- * 用于"已经抓到过航路才在卡片里内嵌显示"——避免为每个页面访问都去请求数据源。
- * @returns {object|null}
- */
-export function peekRoute(callsign) {
-  const cs = (callsign || '').trim().toUpperCase();
-  if (!cs) return null;
-  const hit = routeCache.get(cs);
-  return (hit && hit.data) ? hit.data : null;
-}
-
-/**
- * 只读缓存：取某呼号已缓存的实时轨迹（**绝不发起网络请求**）。
- * 供 /api/live 使用 —— 该接口必须恒定快返回，上游抓取由主查询用 waitUntil 后台预热。
- * @returns {object|null} 与 extractLiveTrack 同结构；未缓存时返回 null
- */
-export function peekLiveTrack(callsign) {
-  const cs = (callsign || '').trim().toUpperCase();
-  if (!cs) return null;
-  const hit = routeCache.get(cs);
-  if (!hit || !hit.data || !hit.data.liveTrack) return null;
-  return hit.data.liveTrack;
-}
-
-/**
  * 查询某呼号的执飞航线（含 filed route / 航路点序列 / 飞行计划）
  * @param {string} callsign 如 AAR223 / CES586 / DAL284
  * @returns {Promise<object|null>}
@@ -231,23 +128,17 @@ export async function queryFlightRoute(callsign) {
 
   const now = Date.now();
   const hit = routeCache.get(cs);
-  if (hit && now - hit.t < (hit.ttl || CACHE_TTL)) return hit.data;
-
-  if (faIsDown()) return null;   // 熔断中：不再发起请求（既不绕过质询，也不持续冲撞）
+  if (hit && now - hit.t < CACHE_TTL) return hit.data;
 
   await throttle();
   lastReq = Date.now();
 
-  // 快速重试 2 次（FlightAware 偶发 socket hang up）；但 403（质询）不重试
+  // 快速重试 2 次（FlightAware 偶发 socket hang up）
   let res = null;
   for (let i = 0; i < 2 && !res; i++) {
     try {
       const r = await fetchURL(BASE + cs, { timeout: 10000, redirects: 8 });
-      if (r.status < 400) { res = r; break; }
-      if (r.status === 403 || r.status === 429) {
-        faMarkDown('数据源返回 HTTP ' + r.status + '（Cloudflare 人机质询）');
-        return null;
-      }
+      if (r.status < 400) res = r;
     } catch (e) {
       if (i === 1) return null;
       await new Promise((r) => setTimeout(r, 800 * (i + 1)));
@@ -297,11 +188,8 @@ export async function queryFlightRoute(callsign) {
       distance:      fp.directDistance ?? null, // 直飞距离 (nm)
       // 从同一页面提取全部历史航班（含 from/to/时间/route，可做兜底补全）
       historicalFlights: extractAllFlights(bootstrap),
-      // 实时轨迹 + 当前状态（OpenSky 在 CF 边缘不可达时的替代源）
-      liveTrack: extractLiveTrack(bootstrap),
     };
-    // 含实时轨迹时缩短缓存，避免"实时位置"过期；纯历史信息仍长缓存
-    routeCache.set(cs, { t: Date.now(), data, ttl: data.liveTrack ? LIVE_TTL : CACHE_TTL });
+    routeCache.set(cs, { t: Date.now(), data });
     return data;
   }
 

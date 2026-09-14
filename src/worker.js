@@ -3,8 +3,7 @@
 // 静态资源(public/)由 Cloudflare assets 托管；这里只处理 API。
 
 import { lookupAircraft } from './aggregate.js';
-import { queryFlightRoute, peekLiveTrack, peekRoute, flightRouteStatus } from './flightroute.js';
-import { nearestAirport } from './airports.js';
+import { queryFlightRoute } from './flightroute.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
 
@@ -47,7 +46,7 @@ async function handleImg(url) {
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -65,9 +64,6 @@ export default {
           forceRefresh: url.searchParams.get('refresh') === '1',
         });
         if (!data.success) return json(data, 404);
-        // 说明：这里曾用 ctx.waitUntil 后台预热 FlightAware 以自动填充"实时位置"面板。
-        // 但 2026-09 起 FlightAware 对非浏览器客户端统一返回 Cloudflare 人机质询（403），
-        // 自动抓取既拿不到数据、又等于持续冲撞对方防护，故已移除；改为用户主动点击时按需获取。
         return json(data);
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
@@ -79,49 +75,23 @@ export default {
       const cs = String(url.searchParams.get('callsign') || '').trim().toUpperCase();
       const icao24 = String(url.searchParams.get('icao24') || '').trim().toLowerCase();
       if (!cs) return json({ success: false, error: '缺少呼号' }, 400);
-      // peek=1：只读服务端缓存，绝不请求上游（用于"已经抓到过航路才在卡片里内嵌显示"）
-      const peekOnly = url.searchParams.get('peek') === '1';
       try {
         // 并行：FlightAware 航路 + OpenSky 真实轨迹 + OpenSky 历史航班
         let trackErr = null, osFlightsErr = null;
         const [route, track, osFlights] = await Promise.all([
-          (peekOnly ? Promise.resolve(peekRoute(cs)) : queryFlightRoute(cs)).catch(() => null),
+          queryFlightRoute(cs).catch(() => null),
           icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
           icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
         ]);
-        // 真实轨迹：优先 OpenSky；CF 边缘访问 OpenSky 为 522 不可达，
-        // 此时用同一页面已抓到的 FlightAware 实时轨迹兜底（零额外请求）。
-        const faLive = (route && route.liveTrack) ? route.liveTrack : null;
         const trackOut = (track && track.ok)
-          ? {
-              callsign: track.callsign, startTime: track.startTime, endTime: track.endTime,
-              pointCount: track.pointCount, points: track.points, source: 'OpenSky',
-            }
-          : (faLive && faLive.points && faLive.points.length > 1)
-            ? {
-                callsign: faLive.callsign, startTime: faLive.startTime, endTime: faLive.endTime,
-                pointCount: faLive.pointCount, points: faLive.points,
-                source: faLive.source, live: faLive.live,
-              }
-            : null;
-        // 诊断信息：Cloudflare 机房（便于排查"某设备/地区失败"这类问题）
-        const colo = (request.cf && request.cf.colo) || '';
+          ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
+          : null;
         // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
         if (!route && !trackOut) {
-          const st = flightRouteStatus();
-          if (peekOnly) return json({ success: false, cached: false, colo }, 404);
-          // 数据源被反爬限制 ≠ 该呼号查不到 —— 必须区分，否则会误导用户
-          if (!st.available) {
-            return json({
-              success: false, sourceDown: true, colo,
-              error: '航路数据源暂时不可用（FlightAware 已开启反爬人机质询，本站不做绕过）',
-            }, 503);
-          }
-          return json({ success: false, error: '未查到该航班信息', colo }, 404);
+          return json({ success: false, error: '未查到该航班信息' }, 404);
         }
         return json({
-          success: true, callsign: cs, colo,
-          trackSource: trackOut ? trackOut.source : null,
+          success: true, callsign: cs,
           from: route ? route.from : null,
           to: route ? route.to : null,
           icaoFrom: route ? route.icaoFrom : '',
@@ -143,36 +113,6 @@ export default {
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
       }
-    }
-
-    // /api/live（实时位置轮询：只读缓存，恒定快返回；数据由 /api/query 后台预热）
-    if (path === '/api/live') {
-      const cs = String(url.searchParams.get('callsign') || '').trim().toUpperCase();
-      if (!cs) return json({ success: false, error: '缺少呼号' }, 400);
-      const lt = peekLiveTrack(cs);
-      if (!lt || !lt.live) return json({ success: true, callsign: cs, pending: true });
-      const lv = lt.live;
-      const na = (lv.latitude != null && lv.longitude != null)
-        ? nearestAirport(lv.latitude, lv.longitude) : null;
-      return json({
-        success: true, callsign: cs, pending: false, source: lt.source,
-        live: {
-          airborne: !lv.onGround,
-          callsign: lt.callsign || cs,
-          latitude: lv.latitude,
-          longitude: lv.longitude,
-          altitudeBaro: lv.altitudeFt,
-          altitudeGeo: lv.altitudeFt,
-          onGround: !!lv.onGround,
-          groundSpeedKnots: lv.groundSpeedKnots,
-          groundSpeedKmh: lv.groundSpeedKnots != null ? Math.round(lv.groundSpeedKnots * 1.852) : null,
-          heading: lv.heading,
-          squawk: '',
-          verticalRate: null,
-          status: lv.status || '',
-          near: na ? { iata: na.iata, icao: na.icao, name: na.name, city: na.city, country: na.country, distKm: Math.round(na.distKm) } : null,
-        },
-      });
     }
 
     // /api/fix（在线补充航路点坐标，需 OPENNAV_TOKEN）
