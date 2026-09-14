@@ -611,8 +611,10 @@
 
     try {
       const icao = String(opts.icao24 || window.__aircraftIcao24 || '').toLowerCase();
+      // peek=1：只读服务端已有缓存，不触发任何上游请求（页面自动显示时使用）
       const url = '/api/route?callsign=' + encodeURIComponent(cs)
-        + (icao ? '&icao24=' + encodeURIComponent(icao) : '');
+        + (icao ? '&icao24=' + encodeURIComponent(icao) : '')
+        + (opts.peek ? '&peek=1' : '');
       const res = await fetch(url);
       const data = await res.json();
       if (mySeq !== inlineSeq) return false;   // 已有更新的内嵌请求，丢弃本次
@@ -627,6 +629,8 @@
       return true;
     } catch (e) {
       if (mySeq !== inlineSeq) return false;
+      // peek 模式只是"看看有没有缓存"：没有就安静隐藏，用户可点按钮手动获取
+      if (opts.peek) { wrap.classList.add('hidden'); return false; }
       // 内嵌是自动发起的，失败提示用弱化样式（弹层是用户主动点击，仍用红色）
       // data-inline=1：交给 document 上的委托重试"内嵌"而不是打开弹层
       bodyEl.innerHTML = '<span class="tip" style="color:var(--muted)">' + esc(e.message) + '</span>'

@@ -224,7 +224,9 @@ function render(d) {
   stopLivePoll();
   livePollCallsign = null;
   renderLive(d.live);
-  maybePollLive(d);
+  // 注：曾在此调用 maybePollLive(d) 轮询 /api/live 自动填充实时位置。
+  // FlightAware 现已对非浏览器客户端返回反爬质询（403）、服务端不再后台预热，
+  // 该轮询必然拿不到数据，故停用（函数保留，数据源恢复后可重新启用）。
   renderRoutes(d.routes);
   renderTech(a);
   renderSources(d.sources);
@@ -274,11 +276,12 @@ function renderCurrentRoute(cr, a) {
   note.textContent = '';
 
   // 抓到"当前执飞航班"的航路后，直接在卡片里内嵌显示地图与航路（无需点击按钮）。
-  // 后端在 /api/query 时已用后台任务预热同一呼号的航路，因此这里通常直接命中服务端缓存。
+  // 用 peek 只读服务端已有缓存：不触发上游抓取（FlightAware 已上反爬质询），
+  // 没有缓存时保持隐藏，用户可点"查看航路地图"按钮手动获取。
   if (cr.callsign && typeof window.renderInlineRoute === 'function') {
     if (cr.callsign !== lastInlineCallsign) {
       lastInlineCallsign = cr.callsign;
-      window.renderInlineRoute(cr.callsign, { icao24: window.__aircraftIcao24 });
+      window.renderInlineRoute(cr.callsign, { icao24: window.__aircraftIcao24, peek: true });
     }
   } else {
     lastInlineCallsign = '';

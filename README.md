@@ -72,7 +72,7 @@ npm run dev
 | [airport-data.com](https://airport-data.com) | 机型号、机龄、出厂号、发动机、所有者、ICAO24、执飞航线 | 全局飞机数据库，核心来源 |
 | [planespotters.net](https://www.planespotters.net/photo/api) | 飞机照片 | 公共照片接口，需 Referer + 联系方式 UA |
 | [OpenSky Network](https://opensky-network.org) | ADS-B 实时位置/状态 + 真实飞行轨迹 | 按 ICAO24 查询；**本地/自建环境可用，但从 Cloudflare 边缘访问为 HTTP 522（不可达）** |
-| [FlightAware](https://flightaware.com) | 按需补全起降机场 + **实时轨迹/当前位置**（CF 上的 OpenSky 替代源） | 页面内嵌 JSON 已含起飞至今的完整轨迹，无需额外请求；有反爬，已做节流 + 缓存 |
+| [FlightAware](https://flightaware.com) | 按需补全起降机场 + 实时轨迹/当前位置 | ⛔ **2026-09 起全站启用 Cloudflare 人机质询（403），非浏览器客户端一律被拦**，故这些功能在线暂不可用（本站不做绕过；命中即熔断 30 分钟）。本地直连同样被拦 |
 | [OurAirports](https://ourairports.com) | 最近机场匹配 | 9057 个商业机场坐标，本地计算 |
 
 服务端抓取外部数据时强制 IPv4、跟随重定向、自定义 UA，以规避解析超时与反爬。
@@ -206,6 +206,8 @@ npm start   # http://127.0.0.1:3000
 - **实时位置与缓存**：含实时轨迹的结果缓存仅保留 5 分钟（静态航路信息仍 6 小时），本地接口 `Cache-Control` 在有实时数据时降到 60 秒，避免浏览器缓存出旧位置。
 - **航路卡片偶发失败**：FlightAware 偶发抖动会导致某次 `/api/route` 返回"未查到该航班信息"（实测约 1/8）。失败结果不会被缓存，**卡片错误提示下提供了"🔄 重试"按钮**，点一下即可（实测重试即成功）。
 - **航线缺失**：部分航班起降机场在数据源未匹配，此时显示记录坐标及最近机场，或点"查起降机场"按钮联网补全。
+- ⛔ **航路 / 真实轨迹当前在线不可用（重要）**：2026-09 起 FlightAware 对非浏览器客户端全站返回 Cloudflare 人机质询（`HTTP 403` + `Cf-Mitigated: challenge`，实测本机与 Cloudflare 出口一致、非偶发），因此**航路（filed route）、真实飞行轨迹、实时位置**这三项在线拿不到数据。本项目**不做反爬绕过**，已改为：命中即熔断 30 分钟（期间不再发起请求）、移除自动抓取、仅在用户点击时按需尝试，并把「数据源不可用」与「该呼号查不到」分开提示（前者 503 + `sourceDown`）。同类免费替代源实测也全部不可用（FlightPlanDatabase 403、adsb.lol 429、adsb.fi 403、airplanes.live 403、OpenSky 从 CF 边缘 522）。**本地 `npm start` 不受影响**（OpenSky 直连可用，轨迹正常）。
+- **要在线上恢复**：需要接**有授权的付费 API**（FlightAware AeroAPI、Flightradar24 API、AeroDataBox 等）。
 - **照片可用性**：planespotters 图片 CDN 偶发不可达，前端自动降级到缩略图，均失败显示"照片加载失败"。
 - **主题定时**：默认按北京时间 6-19 点浅色；**页面加载时按当前时间决定**（不读 localStorage），手动点击只临时覆盖当前页面，刷新即恢复时间规则。
 

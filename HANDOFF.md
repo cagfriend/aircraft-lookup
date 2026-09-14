@@ -41,6 +41,27 @@
   - `queryOpenSkyTrack(icao24)` — **真实飞行轨迹**（**匿名即可用**！返回抽稀后的点，默认≤240 点）
   - `queryOpenSkyFlights(icao24, {hours})` — **历史航班**（**需凭据**，默认 24h 窗口 = 4 credits）
 - **配额**：匿名 400/天；注册 4000/天；**states/tracks/flights 三者配额独立**。`/states` 按包围框 1–4 credits；`/tracks`、`/flights` 按跨越日分区 4–30+ credits
+### ⛔ FlightAware 已被反爬质询封死（2026-09，影响最大的一条）
+
+**现象**：线上航路卡片显示「未查到该航班信息」（机房 AMS），本机直连亦复现。
+
+**实测根因**：`flightaware.com` 全站（含 `/live/flight/*` 与所有 `/ajax/*`）对非浏览器客户端返回 `HTTP 403`，响应头 **`Cf-Mitigated: challenge`**（Cloudflare 托管人机质询，响应体 146KB 挑战页）。换任意 UA（curl / Googlebot / iPhone Safari）都是 403，连续多次一致，**不是偶发**。
+
+**影响**：依赖它的三项在线功能不可用 —— **filed route（航路）、真实飞行轨迹、实时位置**。
+
+**处置（已实施）**：
+- **不做绕过**：不实现质询求解 / 无头浏览器规避 —— 那是规避对方访问控制，既不该做也不可靠。
+- **加熔断**（`flightroute.js`）：命中 403/429 即熔断 30 分钟，期间直接返回 null、**不再发起任何请求**。实测首次 1188ms，之后 **0ms** 直接返回。
+- **停掉自动抓取**：移除 `/api/query` 的后台预热（`ctx.waitUntil`）与前端自动轮询 `/api/live`。对方已明确拒绝自动化访问，每次访问都去打一遍既不礼貌也无意义。
+- **区分错误**：`/api/route` 在源不可用时返回 **503 + `sourceDown:true`**（文案说明反爬质询），与「404 该呼号查不到」区分，避免误导用户。
+- **内嵌卡片改为 `peek=1`（只读服务端缓存）**：有缓存才显示地图，否则安静隐藏；用户可点「查看航路地图」手动尝试（量很小，可接受）。
+
+**已探测且同样不可用的替代源**：FlightPlanDatabase `403`（Cloudflare 1005 = 封禁 ASN/国家）、`api.adsb.lol` 429、`opendata.adsb.fi` 403、`api.airplanes.live` 403、OpenSky 从 CF 边缘 522。
+
+**仍然可用**：airport-data（机型/机龄/执飞记录含坐标/速度/航向）、planespotters（照片）、自有机场与航路点库、Leaflet 地图与大圆示意；**本地 Node 直连 OpenSky 仍可用**，故 `npm start` 本地开发时轨迹功能正常。
+
+**若要在线上恢复**：只能走**有授权的付费 API**（FlightAware AeroAPI / Flightradar24 API / AeroDataBox 等），或换一个对 Cloudflare 出口可达且未上质询的数据源。
+
 - ⚠️ **重要实测结论（2026-09）**：**OpenSky 从 Cloudflare Worker 访问不通** —— `opensky-network.org` 的 states/tracks/auth 全部超时，25s 时返回 **HTTP 522**（Cloudflare 边缘连不上 OpenSky 源站；OpenSky 自己就在 Cloudflare 后面）。因此线上"实时位置""真实轨迹""历史航班"都拿不到数据，只能降级。**本地 Node 直连正常**（轨迹实测 100+ 点）。已做的缓解：超时 15s→6s（`OPENSKY_TIMEOUT_MS` 可调）+ 失败熔断负缓存 5 分钟。
   - **完整可达性实测矩阵（2026-09，CF 边缘 colo=SEA/LHR 双机房一致）**：
 

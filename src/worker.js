@@ -3,7 +3,7 @@
 // 静态资源(public/)由 Cloudflare assets 托管；这里只处理 API。
 
 import { lookupAircraft } from './aggregate.js';
-import { queryFlightRoute, peekLiveTrack } from './flightroute.js';
+import { queryFlightRoute, peekLiveTrack, peekRoute, flightRouteStatus } from './flightroute.js';
 import { nearestAirport } from './airports.js';
 import { queryFixOnline } from './fixlookup.js';
 import { queryOpenSkyTrack, queryOpenSkyFlights } from './opensky.js';
@@ -65,16 +65,9 @@ export default {
           forceRefresh: url.searchParams.get('refresh') === '1',
         });
         if (!data.success) return json(data, 404);
-        // OpenSky 在 CF 边缘不可达时，用后台任务预热 FlightAware 实时位置（不阻塞响应）：
-        // 前端随后轮询 /api/live 取回结果，从而自动填上"实时位置"面板。
-        const cs = data.currentRoute && data.currentRoute.callsign;
-        if (!(data.live && data.live.airborne) && cs && ctx && typeof ctx.waitUntil === 'function') {
-          // 仅在"最近航班记录仍新鲜"时预热，避免为早已落地的航班白抓 FlightAware（反爬风险）
-          const recTime = data.currentRoute.time
-            ? Date.parse(String(data.currentRoute.time).replace(' ', 'T').replace(' UTC', 'Z')) : NaN;
-          const stillFresh = isNaN(recTime) || (Date.now() - recTime) < 2 * 3600 * 1000;
-          if (stillFresh) ctx.waitUntil(queryFlightRoute(cs).catch(() => null));
-        }
+        // 说明：这里曾用 ctx.waitUntil 后台预热 FlightAware 以自动填充"实时位置"面板。
+        // 但 2026-09 起 FlightAware 对非浏览器客户端统一返回 Cloudflare 人机质询（403），
+        // 自动抓取既拿不到数据、又等于持续冲撞对方防护，故已移除；改为用户主动点击时按需获取。
         return json(data);
       } catch (e) {
         return json({ success: false, error: e.message }, 500);
@@ -86,11 +79,13 @@ export default {
       const cs = String(url.searchParams.get('callsign') || '').trim().toUpperCase();
       const icao24 = String(url.searchParams.get('icao24') || '').trim().toLowerCase();
       if (!cs) return json({ success: false, error: '缺少呼号' }, 400);
+      // peek=1：只读服务端缓存，绝不请求上游（用于"已经抓到过航路才在卡片里内嵌显示"）
+      const peekOnly = url.searchParams.get('peek') === '1';
       try {
         // 并行：FlightAware 航路 + OpenSky 真实轨迹 + OpenSky 历史航班
         let trackErr = null, osFlightsErr = null;
         const [route, track, osFlights] = await Promise.all([
-          queryFlightRoute(cs).catch(() => null),
+          (peekOnly ? Promise.resolve(peekRoute(cs)) : queryFlightRoute(cs)).catch(() => null),
           icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
           icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
         ]);
@@ -113,6 +108,15 @@ export default {
         const colo = (request.cf && request.cf.colo) || '';
         // FlightAware 无数据但 OpenSky 有轨迹时，仍返回轨迹（前端仅画轨迹）
         if (!route && !trackOut) {
+          const st = flightRouteStatus();
+          if (peekOnly) return json({ success: false, cached: false, colo }, 404);
+          // 数据源被反爬限制 ≠ 该呼号查不到 —— 必须区分，否则会误导用户
+          if (!st.available) {
+            return json({
+              success: false, sourceDown: true, colo,
+              error: '航路数据源暂时不可用（FlightAware 已开启反爬人机质询，本站不做绕过）',
+            }, 503);
+          }
           return json({ success: false, error: '未查到该航班信息', colo }, 404);
         }
         return json({
