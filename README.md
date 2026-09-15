@@ -150,6 +150,8 @@ aircraft-lookup/
 ├─ scripts/
 │  ├─ build-us-cifp.mjs # 由 FAA FAACIFP18 重建上述索引
 │  └─ verify-us-cifp.mjs # 代表性航路/SID/STAR 数据验证
+├─ proxy/
+│  └─ opensky-proxy.js   # 非 Cloudflare 的 OpenSky 安全中转
 ├─ start.bat / start.sh # 一键启动
 ├─ wrangler.jsonc       # Cloudflare Worker 配置（main + assets）
 ├─ package.json
@@ -174,12 +176,36 @@ aircraft-lookup/
 npm start   # http://127.0.0.1:3000
 ```
 
+## OpenSky 中转（让线上实时状态与真实轨迹可用）
+
+Cloudflare Worker 到 OpenSky 的链路可能不可达。项目会在每次需要 OpenSky 数据时先尝试可选中转；中转不可达会短暂熔断并继续尝试原有直连，仍失败才显示现有降级信息。
+
+将 `proxy/opensky-proxy.js` 部署在一台**不经过 Cloudflare 出口**的 Node/VPS，并在中转环境配置：
+
+```bash
+OPENSKY_PROXY_TOKEN=<随机长密钥>
+OPENSKY_CLIENT_ID=<OpenSky API client id>         # 可选；配置后可取得历史航班
+OPENSKY_CLIENT_SECRET=<OpenSky API client secret> # 可选；配置后可取得历史航班
+OPENSKY_PROXY_PORT=8788                           # 可选
+node proxy/opensky-proxy.js
+```
+
+中转启动前会强制要求 `OPENSKY_PROXY_TOKEN`，并只接受三类固定 OpenSky 请求。随后在 Cloudflare Worker 的 Variables/Secrets 配置：
+
+```text
+OPENSKY_PROXY_BASE=https://你的中转域名
+OPENSKY_PROXY_TOKEN=与中转相同的随机长密钥
+```
+
+不要将 `OPENSKY_CLIENT_SECRET` 放入 Worker；它只应保留在中转主机。中转可用时，页面自动显示实时状态与地图绿色真实轨迹；不可用时，页面保持蓝色计划航路/灰色估算线及最近执飞记录降级。
+
 ## 局限与说明
 
 - **数据可得性**：机型/机龄/注册信息依赖 airport-data.com 是否收录；未收录的注册号返回"未找到"。
 - **复用注册号**：历史上被多个飞机使用过的注册号（如部分 B-XXX），airport-data 会展示多个历史记录；项目已按**标题中的构造号 (C/N)** 匹配当前那架，避免发动机/座位数等字段被旧飞机覆盖。
 - **注册国兜底**：所有者地址缺失/解析失败时，按**注册号前缀**推断国家/地区（如 `B-`=中国、`N`=美国、`JA`=日本、`HL`=韩国、`9M`=马来西亚等）。
 - **OpenSky 覆盖**：ADS-B 实时数据在中国境内覆盖较弱，此时用最近航班记录坐标 + 最近机场作为降级方案。
+- **OpenSky 线上链路**：若 Worker 无法直连 OpenSky，可配置非 Cloudflare 中转；未配置或中转不可达时不会影响机型、照片、计划航路和 FAA CIFP 展开。
 - **航线缺失**：部分航班起降机场在数据源未匹配，此时显示记录坐标及最近机场，或点"查起降机场"按钮联网补全。
 - **航路范围**：FAA CIFP 仅覆盖美国空域；国际航线是否能完整展开，仍取决于已有航路点数据及上游提供的 filed route。
 - **照片可用性**：planespotters 图片 CDN 偶发不可达，前端自动降级到缩略图，均失败显示"照片加载失败"。

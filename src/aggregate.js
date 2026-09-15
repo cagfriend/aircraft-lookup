@@ -23,7 +23,7 @@ const cache = new Map();
 const CACHE_TTL = 30 * 60 * 1000; // 30 分钟
 
 export async function lookupAircraft(rawInput, opts = {}) {
-  const { forceRefresh = false } = opts;
+  const { forceRefresh = false, runtimeEnv = null } = opts;
   const norm = normalizeRegistration(rawInput);
   if (!norm.ok) return { success: false, error: norm.error };
 
@@ -43,7 +43,7 @@ export async function lookupAircraft(rawInput, opts = {}) {
   // 3) OpenSky：实时状态（用 airport-data 给出的 ICAO24）
   let os = { ok: false };
   if (ad.ok && ad.icao24) {
-    os = await queryOpenSky(ad.icao24).catch((e) => ({ ok: false, error: e.message }));
+    os = await queryOpenSky(ad.icao24, runtimeEnv).catch((e) => ({ ok: false, error: e.message }));
   } else if (ad.ok && !ad.icao24) {
     os = { ok: false, note: '未获取到 ICAO24' };
   }

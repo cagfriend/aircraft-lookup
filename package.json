@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "verify:cifp": "node scripts/verify-us-cifp.mjs"
+    "verify:cifp": "node scripts/verify-us-cifp.mjs",
+    "start:opensky-proxy": "node proxy/opensky-proxy.js"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

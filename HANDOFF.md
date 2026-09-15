@@ -63,7 +63,7 @@ D:\aircraft-lookup\
    ├─ aggregate.js        # 编排各数据源 + 机龄 + 缓存 + 最近机场 + 国家
    ├─ airportdata.js      # airport-data.com 抓取解析（cheerio）★核心
    ├─ planespotters.js    # planespotters.net 照片
-   ├─ opensky.js          # OpenSky：实时状态 + 真实轨迹 + 历史航班（OAuth2）
+   ├─ opensky.js          # OpenSky：中转优先、直连兜底的实时状态 + 真实轨迹 + 历史航班（OAuth2）
    ├─ flightroute.js      # FlightAware：filed route + 历史航班（按需）
    ├─ fixlookup.js        # OpenNav 在线航路点（可选，需 token）
    ├─ airports.js         # 最近机场匹配（Haversine）
@@ -71,6 +71,9 @@ D:\aircraft-lookup\
    ├─ airports.json       # 机场源数据
    ├─ fetch.js            # HTTP 客户端（GET/POST，双环境，强制 IPv4）
    └─ register.js         # 注册号规范化 + 连字符变体
+
+  proxy\
+    opensky-proxy.js      # 部署在非 Cloudflare Node/VPS 的 OpenSky 安全中转
 ```
 
 ---
@@ -105,7 +108,7 @@ D:\aircraft-lookup\
 | `airportdata.js` | cheerio 解析 4 类表格；**多构造表按标题 C/N 匹配当前那架**（解决注册号复用串数据）；连字符变体逐个尝试；缺失国家时用 `countryFromRegistration()` 按注册号前缀推断（B=中国、N=美国、JA=日本…） |
 | `aggregate.js` | 机龄 = 当前年 - 出厂年；**缓存 Map，TTL 30 分钟**；`forceRefresh`(`?refresh=1`) 绕过 |
 | `flightroute.js` | 正则提取 `<script>var trackpollBootstrap = {...}</script>`；`pickLatestFlight()` 优先取**有 route** 的最近航班；`extractAllFlights()` 提取全部历史航班；**节流 1.2s/次**、**缓存 6 小时**、页面抓取 timeout 10s、失败重试 2 次 |
-| `opensky.js` | OAuth2 client credentials；token 内存缓存（30 分钟，提前 2 分钟刷新）+ **失败负缓存 5 分钟**；`OS_TIMEOUT=6s`（`OPENSKY_TIMEOUT_MS` 可调）；**熔断**：连续不可达时 5 分钟内直接返回失败；轨迹点抽稀（默认≤240 点，保留首尾） |
+| `opensky.js` | OpenSky 中转优先、直连兜底；OAuth2 client credentials；token 内存缓存（30 分钟，提前 2 分钟刷新）+ **失败负缓存 5 分钟**；`OS_TIMEOUT=6s`（`OPENSKY_TIMEOUT_MS` 可调）；直连熔断 5 分钟，中转失败熔断 1 分钟；轨迹抽稀（默认≤240 点，保留首尾） |
 | `fixlookup.js` | OpenNav 在线航路点；**缓存 7 天**；无 `OPENNAV_TOKEN` 时直接返回 null |
 | `airports.js` | Haversine 求最近机场；`NEAR_KM=10`（前端判定"在机场附近"） |
 | `fetch.js` | 强制 IPv4（规避只返回 IPv6 导致超时）；默认 UA 为 Chrome；`redirects` 上限 6；超时默认 15s |
@@ -172,6 +175,9 @@ D:\aircraft-lookup\
 | `OPENSKY_CLIENT_ID` | OpenSky OAuth2 客户端 ID | 可选（不配则匿名配额 400/天；历史航班不可用） |
 | `OPENSKY_CLIENT_SECRET` | OpenSky OAuth2 密钥 | 可选 |
 | `OPENSKY_TIMEOUT_MS` | OpenSky 请求超时（默认 6000） | 可选 |
+| `OPENSKY_PROXY_BASE` | 非 Cloudflare OpenSky 中转基址（Worker 优先尝试） | 可选 |
+| `OPENSKY_PROXY_TOKEN` | Worker 与中转共享的随机长密钥 | 配置中转时必填 |
+| `OPENSKY_PROXY_PORT` | 中转本机端口，默认 8788 | 仅中转主机 |
 | `OPENNAV_TOKEN` | OpenNav 在线航路点查询 | 可选 |
 | `OPENNAV_API_BASE` | OpenNav 接口基址（默认 `https://opennav.ai`） | 可选 |
 | `PORT` | 本地 Express 端口（默认 3000） | 可选 |
@@ -186,7 +192,7 @@ D:\aircraft-lookup\
 
 | 问题 | 状态 / 原因 |
 |---|---|
-| **OpenSky 从 Cloudflare Worker 不可达** | 实测 `opensky-network.org` 的 states/tracks/auth 全部超时，25s 时返回 **HTTP 522**（CF 边缘连不上 OpenSky 源站；OpenSky 自身托管在 Cloudflare 后面）。→ 线上"实时位置/真实轨迹/历史航班"全部降级；**本地 Node 直连正常**（实测 189 点轨迹）。已缓解：超时 6s + 熔断 5 分钟。<br>替代源实测：`api.adsb.lol` 429 限流、`opendata.adsb.fi` 403、`api.adsbdb.com` 200（仅机型信息） |
+| **OpenSky 从 Cloudflare Worker 不可达** | 实测 `opensky-network.org` 的 states/tracks/auth 全部超时，25s 时返回 **HTTP 522**（CF 边缘连不上 OpenSky 源站；OpenSky 自身托管在 Cloudflare 后面）。已实现 `proxy/opensky-proxy.js`：部署在可直连 OpenSky 的非 Cloudflare Node/VPS，Worker 配 `OPENSKY_PROXY_BASE` / `OPENSKY_PROXY_TOKEN` 后会优先经中转请求；中转失败短熔断后再回落直连与 UI 降级。中转主机配置 `OPENSKY_*` 凭据可启用历史航班。<br>替代源实测：`api.adsb.lol` 429 限流、`opendata.adsb.fi` 403、`api.adsbdb.com` 200（仅机型信息） |
 | **"某设备正常、某设备报错"** | 两个原因叠加：① 服务端曾有故障窗口（`fetch.js` 的 body 遮蔽 bug）② `/api/route` 有 **30 分钟浏览器缓存**，先成功过的设备读缓存看起来一直正常，新请求才暴露。已加 **`colo` 字段**（Cloudflare 机房标识）与错误提示中的机房号，便于定位 |
 | 部分航路点无数据 | OXASA / ENVOP / LALID / ELNIS / IBENO 等数据库未收录 |
 | FlightAware 抓取成本 | 页面约 500KB / 7–26s，有反爬风险；已节流 1.2s + 缓存 6h |

@@ -46,7 +46,7 @@ async function handleImg(url) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, runtimeEnv) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -62,6 +62,7 @@ export default {
       try {
         const data = await lookupAircraft(String(reg), {
           forceRefresh: url.searchParams.get('refresh') === '1',
+          runtimeEnv,
         });
         if (!data.success) return json(data, 404);
         return json(data);
@@ -80,8 +81,8 @@ export default {
         let trackErr = null, osFlightsErr = null;
         const [route, track, osFlights] = await Promise.all([
           queryFlightRoute(cs).catch(() => null),
-          icao24 ? queryOpenSkyTrack(icao24).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
-          icao24 ? queryOpenSkyFlights(icao24).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
+          icao24 ? queryOpenSkyTrack(icao24, {}, runtimeEnv).catch((e) => { trackErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
+          icao24 ? queryOpenSkyFlights(icao24, {}, runtimeEnv).catch((e) => { osFlightsErr = String((e && e.message) || e); return null; }) : Promise.resolve(null),
         ]);
         const trackOut = (track && track.ok)
           ? { callsign: track.callsign, startTime: track.startTime, endTime: track.endTime, pointCount: track.pointCount, points: track.points }
