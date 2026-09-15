@@ -17,6 +17,7 @@
   let routeLayer = null;
   let fetchSeq = 0; // 防止过期请求覆盖新请求
   let fixesLoaded = false; // 航路点数据库是否已懒加载
+  let cifpLoaded = false; // FAA CIFP 美国航路/SID/STAR 数据是否已懒加载
   const onlineFixCache = {}; // OpenNav 在线解析出的坐标缓存
   let lastRouteData = null;   // 供在线解析后重绘
   let lastUnknownFixes = [];  // 当前未解析的航路点名称
@@ -73,11 +74,33 @@
     });
   }
 
+  // FAA CIFP：美国航路、SID、STAR 和终端航路点。与全球航路点库分开懒加载。
+  function ensureCifpLoaded() {
+    if (window.AIRCRAFT_US_CIFP || cifpLoaded) return Promise.resolve();
+    cifpLoaded = true;
+    return new Promise(function (resolve) {
+      var s = document.createElement('script');
+      s.src = '/data/us-cifp.data.js';
+      s.onload = resolve;
+      s.onerror = resolve; // CIFP 加载失败时维持既有全球库和大圆降级
+      document.head.appendChild(s);
+    });
+  }
+
+  function cifpData() {
+    return window.AIRCRAFT_US_CIFP || { fixes: {}, airways: {}, procedures: {} };
+  }
+
   // 取某 ident 的全部候选坐标（数据库 + 在线补充缓存）
   function candidatesFor(name) {
-    const db = (window.AIRCRAFT_FIXES || {})[name] || onlineFixCache[name];
-    if (!db) return [];
-    return Array.isArray(db[0]) ? db : [db]; // 单点或数组（同名多坐标）
+    const db = (window.AIRCRAFT_FIXES || {})[name];
+    const cifp = cifpData().fixes[name];
+    const online = onlineFixCache[name];
+    const out = [];
+    if (db) out.push.apply(out, Array.isArray(db[0]) ? db : [db]);
+    if (cifp) out.push(cifp);
+    if (online) out.push.apply(out, Array.isArray(online[0]) ? online : [online]);
+    return out; // 单点或数组（同名多坐标）
   }
 
   // 两点大圆距离（公里）
@@ -171,6 +194,100 @@
     }
     if (/^[A-Z]{2,7}$/.test(u)) return { kind: 'fix', label: u };
     return { kind: 'other', label: u };
+  }
+
+  function nearbyFix(classified, index, step) {
+    for (let i = index + step; i >= 0 && i < classified.length; i += step) {
+      const item = classified[i];
+      if (item.kind === 'fix' || item.kind === 'coord') return item.label;
+    }
+    return '';
+  }
+
+  function itemLabel(item) {
+    return typeof item === 'string' ? item : (item && item.label) || '';
+  }
+
+  function appendDistinct(target, points) {
+    points.forEach((point) => {
+      if (!point || itemLabel(target[target.length - 1]) === itemLabel(point)) return;
+      target.push(point);
+    });
+  }
+
+  function matchingTransition(variants, nearby) {
+    if (!nearby) return [];
+    // 入口转换段应从航班计划中紧邻程序名的点开始；只用 includes 会把
+    // "经由 DILLO" 错配到另一条中途经过 DILLO 的转换段。
+    const all = Object.values(variants);
+    const match = all.find((points) => points[0] === nearby)
+      || all.find((points) => points.includes(nearby));
+    return match || [];
+  }
+
+  // 将美国的航路编码、SID、STAR 展开成 CIFP 中的已发布航路点。
+  // 只有相邻两点均能确认时才展开航路，避免把长航路画到错误区段。
+  function expandCifpRoute(classified, icaoFrom, icaoTo) {
+    const cifp = cifpData();
+    const out = [];
+    let airwayCount = 0;
+    let procedureCount = 0;
+
+    classified.forEach((item, index) => {
+      if (item.kind === 'airway' && cifp.airways[item.label]) {
+        const before = nearbyFix(classified, index, -1);
+        const after = nearbyFix(classified, index, 1);
+        const airway = cifp.airways[item.label];
+        const fromIndex = airway.indexOf(before);
+        const toIndex = airway.indexOf(after);
+        if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+          const points = airway.slice(
+            Math.min(fromIndex, toIndex),
+            Math.max(fromIndex, toIndex) + 1,
+          );
+          if (fromIndex > toIndex) points.reverse();
+          appendDistinct(out, points.map((label) => ({ kind: 'fix', label, cifp: true })));
+          airwayCount += 1;
+          return;
+        }
+      }
+
+      if (item.kind === 'procedure') {
+        // D = departure / SID，E = arrival / STAR；机场由航段两端确定。
+        const departure = cifp.procedures[icaoFrom]?.[item.label]?.D;
+        const arrival = cifp.procedures[icaoTo]?.[item.label]?.E;
+        const variants = departure || arrival;
+        if (variants) {
+          const common = variants['5'] || variants._ || [];
+          const nearby = departure
+            ? nearbyFix(classified, index, 1)
+            : nearbyFix(classified, index, -1);
+          const transition = matchingTransition(variants, nearby);
+          const points = [];
+          // SID 的航班计划通常只列出公共出口；STAR 则先列出入口转换段。
+          if (arrival) appendDistinct(points, transition);
+          appendDistinct(points, common.length ? common : transition);
+          if (!points.length) {
+            const fallback = Object.values(variants).sort((a, b) => b.length - a.length)[0] || [];
+            appendDistinct(points, fallback);
+          }
+          if (points.length) {
+            appendDistinct(out, points.map((label) => ({ kind: 'fix', label, cifp: true })));
+            procedureCount += 1;
+            return;
+          }
+        }
+      }
+
+      // 未覆盖的国际航路、程序保持原来的降级行为。
+      out.push(item);
+    });
+
+    return {
+      items: out.filter((item, index) => index === 0 || itemLabel(item) !== itemLabel(out[index - 1])),
+      airwayCount,
+      procedureCount,
+    };
   }
 
   // ---- 大圆插值：p1/p2 = [lat, lon]，返回 n 段折线点 ----
@@ -309,14 +426,14 @@
     const icaoFrom = f.icao || '', icaoTo = t.icao || '';
     const tokens = (data.route || '').trim().split(/\s+/).filter(Boolean);
     const classified = tokens.map((tk) => classifyToken(tk, icaoFrom, icaoTo));
-    const coordPts = classified.filter((x) => x.kind === 'coord'); // 真实坐标航路点
-    const fixes = classified.filter((x) => x.kind === 'fix');       // 名称航路点
+    const cifpExpansion = expandCifpRoute(classified, icaoFrom, icaoTo);
+    const mapItems = cifpExpansion.items;
 
     // 1) 按 filed route 顺序解析真实坐标点（顺序就近选择 + 偏离过滤）
     const orderedPts = [];
     const unknownFixes = [];  // 数据库里没有的点
     const droppedFixes = [];  // 有同名点但位置明显偏离、已丢弃的点
-    resolveSequential(classified, fLL, tLL).forEach((r) => {
+    resolveSequential(mapItems, fLL, tLL).forEach((r) => {
       if (r.ll) {
         orderedPts.push([r.ll[0], r.ll[1], r.label]);
       } else if (r.label) {
@@ -420,6 +537,13 @@
       }).join('') + '</div>';
       if (hasReal) html += '<div class="tip">🔵 蓝色点为航路点（真实位置）；🟡 空心点为未收录航路点的示意。</div>';
       else if (unknownFixes.length) html += '<div class="tip">🟡 航路点暂无坐标数据，按航路顺序沿大圆航线示意分布。</div>';
+      if (cifpExpansion.airwayCount || cifpExpansion.procedureCount) {
+        const details = [];
+        if (cifpExpansion.airwayCount) details.push(cifpExpansion.airwayCount + ' 条航路');
+        if (cifpExpansion.procedureCount) details.push(cifpExpansion.procedureCount + ' 个 SID/STAR');
+        html += '<div class="tip">🇺🇸 已按 FAA CIFP AIRAC '
+          + esc(cifpData().cycle || '') + ' 展开 ' + esc(details.join('、')) + '。</div>';
+      }
       if (droppedFixes.length) {
         html += '<div class="tip">⚠️ 已过滤 ' + droppedFixes.length + ' 个同名但位置明显偏离的航路点：'
           + esc(droppedFixes.slice(0, 8).join('、'))
@@ -502,7 +626,7 @@
         : '仅真实轨迹（无起降机场数据）';
       subEl.innerHTML = head + '　<span style="opacity:.5">地图 © OpenStreetMap</span>';
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';
-      await ensureFixesLoaded();
+      await Promise.all([ensureFixesLoaded(), ensureCifpLoaded()]);
       drawRoute(data);
       requestAnimationFrame(() => map.invalidateSize());
       // 本地数据库未收录的点 → 尝试 OpenNav 在线解析（需后端配置 OPENNAV_TOKEN）

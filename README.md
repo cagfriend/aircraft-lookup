@@ -22,6 +22,7 @@ Node.js + Express 后端聚合多个公开数据源，前端原生 HTML/CSS/JS�
 - **深色 / 浅色双主题**：右上角手动切换，偏好保存在 localStorage
 - **搜索历史**：自动保存最近 5 条搜索（含缩略图、注册号、机型、航司、年份），点击可快速复查
 - **按需查询起降机场**：缺失起降机场的记录行显示"🔍 查起降机场"按钮，点击才联网查询 FlightAware（不拖慢主查询）
+- **美国航路展开**：地图会离线展开 FAA CIFP 中的航路、SID、STAR 和终端航路点；其余地区保留原有航路点与大圆降级
 - **缓存刷新按钮**：结果页右上角 🔄，绕过 30 分钟缓存强制刷新
 - **容错输入**：注册号可以不写连字符，自动尝试多种标准写法（`B7973` ↔ `B-7973`、`GEUYR` ↔ `G-EUYR`）
 
@@ -70,6 +71,7 @@ npm run dev
 | [OpenSky Network](https://opensky-network.org) | ADS-B 实时位置/状态 | 按 ICAO24 查询，中国境内覆盖较弱 |
 | [FlightAware](https://flightaware.com) | 按需补全起降机场 | 需要登录，仅注册号指向的航班场景 |
 | [OurAirports](https://ourairports.com) | 最近机场匹配 | 9057 个商业机场坐标，本地计算 |
+| [FAA CIFP](https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/) | 美国航路、SID、STAR、终端航路点 | 随前端静态资源发布，当前 AIRAC 2609 |
 
 服务端抓取外部数据时强制 IPv4、跟随重定向、自定义 UA，以规避解析超时与反爬。
 
@@ -142,7 +144,12 @@ aircraft-lookup/
 ├─ public/
 │  ├─ index.html        # 页面结构
 │  ├─ style.css         # 深色 + 浅色双主题 CSS 变量体系
-│  └─ app.js            # 前端逻辑（查询、渲染、主题定时切换、搜索历史、刷新）
+│  ├─ app.js            # 前端逻辑（查询、渲染、主题定时切换、搜索历史、刷新）
+│  ├─ route-map.js      # 航路地图和 CIFP 航路展开
+│  └─ data/us-cifp.data.js # FAA CIFP 美国航路/SID/STAR 懒加载索引
+├─ scripts/
+│  ├─ build-us-cifp.mjs # 由 FAA FAACIFP18 重建上述索引
+│  └─ verify-us-cifp.mjs # 代表性航路/SID/STAR 数据验证
 ├─ start.bat / start.sh # 一键启动
 ├─ wrangler.jsonc       # Cloudflare Worker 配置（main + assets）
 ├─ package.json
@@ -174,6 +181,7 @@ npm start   # http://127.0.0.1:3000
 - **注册国兜底**：所有者地址缺失/解析失败时，按**注册号前缀**推断国家/地区（如 `B-`=中国、`N`=美国、`JA`=日本、`HL`=韩国、`9M`=马来西亚等）。
 - **OpenSky 覆盖**：ADS-B 实时数据在中国境内覆盖较弱，此时用最近航班记录坐标 + 最近机场作为降级方案。
 - **航线缺失**：部分航班起降机场在数据源未匹配，此时显示记录坐标及最近机场，或点"查起降机场"按钮联网补全。
+- **航路范围**：FAA CIFP 仅覆盖美国空域；国际航线是否能完整展开，仍取决于已有航路点数据及上游提供的 filed route。
 - **照片可用性**：planespotters 图片 CDN 偶发不可达，前端自动降级到缩略图，均失败显示"照片加载失败"。
 - **主题定时**：默认按北京时间 6-19 点浅色；页面需在对应时段打开才自动切换（刷新后生效），手动点击会覆盖。
 

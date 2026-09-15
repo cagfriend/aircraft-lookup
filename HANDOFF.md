@@ -114,17 +114,18 @@ D:\aircraft-lookup\
 
 职责：地图弹层、航路点解析、绘制。
 
-1. **懒加载** `/data/fixes.data.js`（首次开地图时注入 `<script>`，约 3.2MB）
-2. **token 分类** `classifyToken()`：`coord`(4700N/08000W) / `airway`(J17、A1、Y807) / `procedure`(SLEEK2、LAIKS4) / `airport` / `fix`(纯字母) ；去掉开头可能的 + 或 - 前缀
-3. **航路点解析** `resolveSequential()` ★关键：
+1. **懒加载** `/data/fixes.data.js`（全球航路点，约 3.2MB）与 `/data/us-cifp.data.js`（FAA CIFP，美国航路/SID/STAR/终端航路点，约 3.0MB）
+2. **FAA CIFP 展开**：`expandCifpRoute()` 仅在相邻端点均能确认时展开美国航路；SID 使用公共出口段，STAR 优先选与相邻点匹配的入口转换段并衔接公共段。CIFP 数据周期为 AIRAC 2609。
+3. **token 分类** `classifyToken()`：`coord`(4700N/08000W) / `airway`(J17、A1、Y807) / `procedure`(SLEEK2、LAIKS4) / `airport` / `fix`(纯字母) ；去掉开头可能的 + 或 - 前缀
+4. **航路点解析** `resolveSequential()` ★关键：
    - 按路线顺序逐点解析，用**上一个已确定点**作参考就近选候选（解决同名点如 ABI/BRADD/PNH 全球多处）
    - **离群过滤**：最近候选仍超过 `max(1200, 期望段长×3) km`（上限 4000km）→ 丢弃不上图
    - 被丢弃的点会在卡片里列出
-4. **经度处理**：`unwrapLng()` 展开跨日界线的经度（否则跨太平洋画成横穿地图的直线）；`alignToFrame()` 把轨迹对齐到航线同一世界副本；机场+航路点+折线统一 `chainFrame`
-5. **大圆插值** `gcArc()`：球面线性插值，用于无航路时的兜底弧线
-6. **瓦片降级链**：高德 → OpenStreetMap → CARTO；连续 3 次 tileerror 或 6s 无 tileload 即切换；版权只显示当前源
-7. **绘制语义**：🟢 绿线 = OpenSky 真实轨迹；🔵 蓝线/蓝点 = filed route 航路点；🟡 空心 = 未收录点示意；灰虚线 = 大圆兜底
-8. 打开弹层时把当前机 ICAO24（`window.__aircraftIcao24`，由 `app.js` 在 render 时写入）带给后端
+5. **经度处理**：`unwrapLng()` 展开跨日界线的经度（否则跨太平洋画成横穿地图的直线）；`alignToFrame()` 把轨迹对齐到航线同一世界副本；机场+航路点+折线统一 `chainFrame`
+6. **大圆插值** `gcArc()`：球面线性插值，用于无航路时的兜底弧线
+7. **瓦片降级链**：高德 → OpenStreetMap → CARTO；连续 3 次 tileerror 或 6s 无 tileload即切换；版权只显示当前源
+8. **绘制语义**：🟢 绿线 = OpenSky 真实轨迹；🔵 蓝线/蓝点 = filed route 航路点；🟡 空心 = 未收录点示意；灰虚线 = 大圆兜底
+9. 打开弹层时把当前机 ICAO24（`window.__aircraftIcao24`，由 `app.js` 在 render 时写入）带给后端
 
 ---
 
@@ -154,6 +155,13 @@ D:\aircraft-lookup\
   - 单坐标 → `[lat,lon]`；**同名多点 → 数组**（前端按航线就近选择）
 - **覆盖局限**：南美等部分国际命名点缺失（如 ALTIB / VIICE2 / UM779）；VOR 类基本齐全
 - **在线补充**：`/api/fix`（OpenNav，需 `OPENNAV_TOKEN`）；未收录点最后走"按序示意分布"
+
+### FAA CIFP 美国航路索引（`public/data/us-cifp.data.js`）
+
+- 由 FAA 公布的 `FAACIFP18`（ARINC 424）生成；当前 AIRAC 2609。
+- 含 71,252 个航路/终端航路点、1,504 条航路、4,043 个 SID/STAR；文件约 3.0MB，地图首次打开时懒加载。
+- 构建：`node scripts/build-us-cifp.mjs <FAACIFP18路径> <AIRAC周期>`；验证：`npm run verify:cifp`。
+- 仅覆盖美国。全球完整程序与航路仍需要具备相应授权的国际 AIRAC 数据源。
 
 ---
 
