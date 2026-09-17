@@ -224,6 +224,31 @@ function render(d) {
   renderRoutes(d.routes);
   renderTech(a);
   renderSources(d.sources);
+  renderFr24AircraftLink(d.raw || a.registration || d.reg, a.fullType);
+}
+
+function renderFr24AircraftLink(reg, fullType) {
+  const link = $('#fr24AircraftLink');
+  const fr24Reg = formatFr24Registration(reg);
+  if (!fr24Reg) {
+    link.hidden = true;
+    link.removeAttribute('href');
+    return;
+  }
+  link.href = `https://www.flightradar24.com/data/aircraft/${encodeURIComponent(fr24Reg.toLowerCase())}`;
+  const label = `在 Flightradar24 查看${fullType ? ` ${fullType}` : '该飞机'}（${fr24Reg}）`;
+  link.title = label;
+  link.setAttribute('aria-label', label);
+  link.hidden = false;
+}
+
+// 本站内部检索会去掉横杠；FR24 的部分注册号地址（如中国 B-xxxx）需要保留该格式。
+function formatFr24Registration(reg) {
+  const value = String(reg || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!/^[A-Z0-9-]+$/.test(value)) return '';
+  if (value.includes('-')) return value;
+  if (/^B[A-Z0-9]{4}$/.test(value)) return `B-${value.slice(1)}`;
+  return value;
 }
 
 function renderCurrentRoute(cr, a) {

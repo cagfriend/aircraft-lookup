@@ -274,6 +274,19 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .src.ok  { color: var(--ok);  border-color: color-mix(in srgb, var(--ok)  35%, transparent); }
 .src.bad { color: var(--err); border-color: color-mix(in srgb, var(--err) 35%, transparent); }
 
+/* ===== FR24 外部航空信息链接 ===== */
+.fr24-aircraft-link {
+  position: absolute; top: 14px; right: 60px;
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent2) 45%, transparent);
+  border-radius: 999px; color: var(--accent2); text-decoration: none;
+  font-size: 13px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent2) 9%, transparent);
+  transition: background .15s, transform .05s;
+}
+.fr24-aircraft-link:hover { background: color-mix(in srgb, var(--accent2) 18%, transparent); }
+.fr24-aircraft-link:active { transform: translateY(1px); }
+
 /* ===== Footer ===== */
 .footer { border-top: 1px solid var(--border); padding: 24px 0; color: var(--muted); font-size: 12.5px; text-align: center; }
 
