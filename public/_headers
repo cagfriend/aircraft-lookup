@@ -1,0 +1,5 @@
+/offline-map/data/overview.*.json
+  Cache-Control: public, max-age=31536000, immutable
+
+/offline-map/data/detail.*.json
+  Cache-Control: public, max-age=31536000, immutable

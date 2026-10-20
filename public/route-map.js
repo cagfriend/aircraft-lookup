@@ -22,25 +22,7 @@
   let lastRouteData = null;   // 供在线解析后重绘
   let lastUnknownFixes = [];  // 当前未解析的航路点名称
 
-  // 地图瓦片源（按序降级）：高德(国内/手机通常可加载) → OSM → Carto(全球兜底)
-  const TILE_SETS = [
-    {
-      url: 'https://wprd{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
-      opts: { subdomains: ['1', '2', '3', '4'], maxZoom: 18 },
-      label: '高德',
-    },
-    {
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      opts: { subdomains: ['a', 'b', 'c'], maxZoom: 19 },
-      label: 'OpenStreetMap',
-    },
-    {
-      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-      opts: { subdomains: ['a', 'b', 'c', 'd'], maxZoom: 19 },
-      label: 'CARTO',
-    },
-  ];
-  let tileSourceIdx = 0;
+  let basemapPromise = null;
 
   // 注入地图标记样式（避免动 style.css）
   const styleEl = document.createElement('style');
@@ -320,35 +302,40 @@
   }
 
   // ---- Leaflet 初始化（弹层显示后再建，否则容器尺寸为 0）----
-  let attributionCtl = null;
-
-  // 添加当前瓦片源；加载失败(连续错误或超时)时自动降级到下一个源，并只保留当前源的版权
-  function addTileSource() {
-    const set = TILE_SETS[tileSourceIdx];
-    const layer = L.tileLayer(set.url, set.opts).addTo(map);
-    if (attributionCtl) map.removeControl(attributionCtl);
-    attributionCtl = L.control.attribution({ prefix: false }).addAttribution('地图 © ' + set.label).addTo(map);
-    let errors = 0;
-    const fail = () => {
-      if (tileSourceIdx >= TILE_SETS.length - 1) return;
-      tileSourceIdx += 1;
-      map.removeLayer(layer);
-      addTileSource();
-    };
-    layer.on('tileerror', () => { errors += 1; if (errors >= 3) fail(); });
-    // 若 6 秒内没有任何砖块加载成功，也判定当前源不可用，切下一个
-    const timer = setTimeout(() => { if (errors === 0) fail(); }, 6000);
-    layer.on('tileload', () => clearTimeout(timer));
-    return layer;
+  let basemapStatus = null;
+  function ensureBasemap() {
+    if (basemapPromise) return basemapPromise;
+    basemapStatus.getContainer().textContent = '正在加载底图…';
+    basemapPromise = import('/offline-map/layer.js').then(module => module.installOfflineBasemap(L, map))
+      .then(controller => {
+        basemapStatus.getContainer().hidden = true;
+        return controller;
+      }).catch(() => {
+        basemapPromise = null;
+        const node = basemapStatus.getContainer();
+        node.textContent = '底图暂不可用，点击重试';
+        node.hidden = false;
+      });
+    return basemapPromise;
   }
 
   function initMap() {
     if (map) return map;
-    map = L.map('routeMap', { zoomControl: false, attributionControl: false });
+    map = L.map('routeMap', { zoomControl: false, attributionControl: false, preferCanvas: true, minZoom: 2, maxZoom: 12 });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    addTileSource();
+    L.control.attribution({ prefix: false }).addAttribution('<a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">Natural Earth</a>').addTo(map);
+    basemapStatus = L.control({position: 'topleft'});
+    basemapStatus.onAdd = () => {
+      const button = L.DomUtil.create('button', 'basemap-status');
+      button.type = 'button';
+      L.DomEvent.disableClickPropagation(button);
+      L.DomEvent.on(button, 'click', ensureBasemap);
+      return button;
+    };
+    basemapStatus.addTo(map);
     // 初始给一个世界视野，让地图立刻有内容，避免等待接口返回期间白屏
     map.setView([20, 0], 2);
+    ensureBasemap();
     return map;
   }
 
@@ -602,11 +589,13 @@
     const mySeq = ++fetchSeq;
     show(modal);
     titleEl.textContent = callsign.toUpperCase() + ' 航路';
-    subEl.innerHTML = '正在获取航路信息…　地图 © OpenStreetMap';
+    subEl.innerHTML = '正在获取航路信息…';
     bodyEl.innerHTML = '<span class="tip">加载中…</span>';
     initMap();
+    ensureBasemap();
     // 容器由 hidden 变为可见后重新计算尺寸，避免地图空白
-    requestAnimationFrame(() => { map.invalidateSize(); map.setView([20, 0], 2); });
+    map.setView([20, 0], 2);
+    requestAnimationFrame(() => map.invalidateSize());
 
     try {
       // 带上当前飞机的 ICAO24，后端据此并行取 OpenSky 真实轨迹/历史航班
@@ -624,9 +613,10 @@
       const head = (f && t)
         ? esc((f.code || '') + ' ' + (f.name || '')) + '　→　' + esc((t.code || '') + ' ' + (t.name || ''))
         : '仅真实轨迹（无起降机场数据）';
-      subEl.innerHTML = head + '　<span style="opacity:.5">地图 © OpenStreetMap</span>';
+      subEl.innerHTML = head;
       titleEl.textContent = (callsign || '').toUpperCase() + ' 航路';
       await Promise.all([ensureFixesLoaded(), ensureCifpLoaded()]);
+      if (mySeq !== fetchSeq) return;
       drawRoute(data);
       requestAnimationFrame(() => map.invalidateSize());
       // 本地数据库未收录的点 → 尝试 OpenNav 在线解析（需后端配置 OPENNAV_TOKEN）

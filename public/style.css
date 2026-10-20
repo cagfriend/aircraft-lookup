@@ -382,7 +382,7 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .route-map {
   width: 100%; height: 380px; min-height: 260px;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  background: #e8eef6; z-index: 0;
+  background: #dcecf2; z-index: 0;
 }
 .route-card-body {
   padding: 12px 18px 16px; font-size: 13px; color: var(--muted);
@@ -411,10 +411,8 @@ body, .card, .search-input, .search-btn, .header, .footer, .live-chip,
 .route-wpt .coord-tip { font-size: 10px; color: var(--muted); display: block; }
 .route-metric-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12.5px; }
 
-/* 地图暗色主题适配（Leaflet 瓦片反色） */
-html:not(.light) .route-map .leaflet-tile {
-  filter: brightness(.65) invert(1) contrast(1.2) hue-rotate(180deg);
-}
+/* 矢量底图直接使用深浅配色，不对航线或底图做反色滤镜。 */
+html:not(.light) .route-map { background: #111f2b; }
 
 /* ===== 响应式 ===== */
 @media (max-width: 700px) {

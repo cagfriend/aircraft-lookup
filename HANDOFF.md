@@ -54,7 +54,8 @@ D:\aircraft-lookup\
 │  ├─ index.html          # 页面结构（含航路地图弹层 DOM）
 │  ├─ style.css           # 深/浅双主题 CSS 变量 + 全部样式
 │  ├─ app.js              # 主前端：查询/渲染/主题/搜索历史/航段可点击
-│  ├─ route-map.js        # 航路地图弹层（Leaflet）：航路点解析、轨迹绘制、瓦片降级
+│  ├─ route-map.js        # 航路地图弹层（Leaflet）：航路点解析、轨迹绘制、矢量底图入口
+│  ├─ offline-map/        # Natural Earth Canvas 渲染、空间索引、浏览器缓存与分层数据
 │  ├─ data/
 │  │  └─ fixes.data.js    # 【航路点数据库】约 3.2MB，11.5 万 ident，懒加载
 │  └─ vendor/leaflet/     # Leaflet 1.9.4（本地托管，避免 CDN 被墙）
@@ -126,7 +127,7 @@ D:\aircraft-lookup\
    - 被丢弃的点会在卡片里列出
 5. **经度处理**：`unwrapLng()` 展开跨日界线的经度（否则跨太平洋画成横穿地图的直线）；`alignToFrame()` 把轨迹对齐到航线同一世界副本；机场+航路点+折线统一 `chainFrame`
 6. **大圆插值** `gcArc()`：球面线性插值，用于无航路时的兜底弧线
-7. **瓦片降级链**：高德 → OpenStreetMap → CARTO；连续 3 次 tileerror 或 6s 无 tileload即切换；版权只显示当前源
+7. **底图（2026-10-20 更新）**：本站发布 Natural Earth 矢量数据，移除高德/OSM/CARTO 瓦片链。`offline-map/layer.js` + `spatial-index.js` 按视野绘制，概览 gzip 约 0.59 MB，zoom ≥ 4 才加载详细边界（gzip 约 2.66 MB）。`cache.js` 优先读 Cache Storage，数据文件名含内容哈希；`_headers` 配置长期 HTTP 缓存。缓存不可用时网络加载，详细层失败保留概览，概览失败提供重试。主题通过观察 html 的 light 类实时同步。地图首次打开时的异步尺寸刷新不再重设中心，以免覆盖快速返回的航线视野。
 8. **绘制语义**：🟢 绿线 = OpenSky 真实轨迹；🔵 蓝线/蓝点 = filed route 航路点；🟡 空心 = 未收录点示意；灰虚线 = 大圆兜底
 9. 打开弹层时把当前机 ICAO24（`window.__aircraftIcao24`，由 `app.js` 在 render 时写入）带给后端
 
@@ -197,7 +198,7 @@ D:\aircraft-lookup\
 | 部分航路点无数据 | OXASA / ENVOP / LALID / ELNIS / IBENO 等数据库未收录 |
 | FlightAware 抓取成本 | 页面约 500KB / 7–26s，有反爬风险；已节流 1.2s + 缓存 6h |
 | airport-data.com 限流 | 本地 IP 高频抓取会 403，隔段时间恢复；**Cloudflare 出口不受影响**。调试别刷爆 |
-| 移动端底图 | 部分网络下 OSM 被墙 → 已做三源降级；高德在部分网络不可用 |
+| 移动端底图 | 已改为本站 Natural Earth 分层矢量底图；已加载数据可从浏览器缓存重用，首次下载仍需要本站可达 |
 
 ---
 

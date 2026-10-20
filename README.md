@@ -23,6 +23,7 @@ Node.js + Express 后端聚合多个公开数据源，前端原生 HTML/CSS/JS�
 - **搜索历史**：自动保存最近 5 条搜索（含缩略图、注册号、机型、航司、年份），点击可快速复查
 - **按需查询起降机场**：缺失起降机场的记录行显示"🔍 查起降机场"按钮，点击才联网查询 FlightAware（不拖慢主查询）
 - **美国航路展开**：地图会离线展开 FAA CIFP 中的航路、SID、STAR 和终端航路点；其余地区保留原有航路点与大圆降级
+- **可缓存的矢量底图**：Natural Earth 数据随网站发布，Leaflet Canvas 本地绘制国界、省级边界、湖泊与中文地名；不再依赖外部地图瓦片。首次加载成功后可从浏览器缓存读取。
 - **缓存刷新按钮**：结果页右上角 🔄，绕过 30 分钟缓存强制刷新
 - **容错输入**：注册号可以不写连字符，自动尝试多种标准写法（`B7973` ↔ `B-7973`、`GEUYR` ↔ `G-EUYR`）
 
@@ -198,6 +199,16 @@ OPENSKY_PROXY_TOKEN=与中转相同的随机长密钥
 ```
 
 不要将 `OPENSKY_CLIENT_SECRET` 放入 Worker；它只应保留在中转主机。中转可用时，页面自动显示实时状态与地图绿色真实轨迹；不可用时，页面保持蓝色计划航路/灰色估算线及最近执飞记录降级。
+
+## 航路底图与缓存
+
+`public/offline-map/` 复用了 Trip Manager 的空间索引与 Canvas 渲染方案，数据从固定版本的 Natural Earth GeoJSON 构建。概览约 1.83 MB JSON（gzip 约 0.59 MB）；缩放到 4 级及以上时按需加载详细边界，约 7.90 MB JSON（gzip 约 2.66 MB）。航线图仅保留国界、省级边界、湖泊和中文地名。
+
+两份 JSON 使用内容哈希文件名，Cloudflare 长期缓存；浏览器另存 Cache Storage。详细数据失败时继续显示概览，概览失败时可点击重试；浏览器不允许持久缓存时回退到正常网络加载。深浅主题跟随本站主题，跨日界线按当前世界副本绘制。
+
+重建：`npm run build:basemap`（Node.js + curl）；校验：`npm run verify:basemap`。原始下载缓存于 `.cache/natural-earth/`；可通过 `NATURAL_EARTH_CACHE` 指向已有原始下载缓存。来源版本、SHA-256、处理参数及产物哈希见 `public/offline-map/data/manifest.json`。更新产物后可删除 manifest 未引用的旧版 JSON，并一并提交 catalog、manifest 和新 JSON。
+
+Natural Earth 数据为公共领域，允许修改、分发和商用，详见[官方许可](https://www.naturalearthdata.com/about/terms-of-use/)。这里的 10m 表示 1:1000 万比例尺，适合航线概览。缓存只覆盖已加载的底图；首次使用及航班查询仍需联网，浏览器清理站点数据后需重新下载。
 
 ## 局限与说明
 
